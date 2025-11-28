@@ -22,6 +22,14 @@ type LogRecord struct {
 	Type  LogRecordType
 }
 
+// LogRecord 的头部信息
+type logRecordHeader struct {
+	crc        uint32        // crc 校验值
+	recordType LogRecordType // 标识 LogRecord 的类型
+	keySize    uint32        // key 的长度
+	valueSize  uint32        // value 的长度
+}
+
 // LogRecordPos 数据内存索引，描述数据在磁盘位置
 type LogRecordPos struct {
 	Fid    uint32 // 文件 id，表示数据存储的文件标识
@@ -30,5 +38,10 @@ type LogRecordPos struct {
 
 // EncodeLogRecord 对 LogRecord 进行编码，返回字节数组长度
 func EncodeLogRecord(logRecord *LogRecord) ([]byte, int64) {
+	return nil, 0
+}
+
+// 对字节数组中的 Handler 信息进行解码
+func decodeLogRecordHeader(buf []byte) (*logRecordHeader, int64) {
 	return nil, 0
 }
