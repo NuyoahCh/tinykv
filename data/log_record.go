@@ -22,3 +22,8 @@ type LogRecordPos struct {
 	Fid    uint32 // 文件 id，表示数据存储的文件标识
 	Offset int64  // 位置偏移，表示数据存储文件的位置
 }
+
+// EncodeLogRecord 对 LogRecord 进行编码，返回字节数组长度
+func EncodeLogRecord(logRecord *LogRecord) ([]byte, int64) {
+	return nil, 0
+}
