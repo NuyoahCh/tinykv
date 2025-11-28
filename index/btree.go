@@ -13,8 +13,8 @@ type BTree struct {
 	lock *sync.RWMutex // 加锁保护
 }
 
-// NewBtree 初始化 BTree 索引结构
-func NewBtree() *BTree {
+// NewBTree 初始化 BTree 索引结构
+func NewBTree() *BTree {
 	return &BTree{
 		// 初始化叶子结点的数量，可根据业务进行选择
 		tree: btree.New(32),
