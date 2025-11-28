@@ -1,8 +1,14 @@
 package tinykv
 
 import (
+	"errors"
 	"github.com/Nuyoahch/tinykv/data"
 	"github.com/Nuyoahch/tinykv/index"
+	"io"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -12,9 +18,44 @@ import (
 type DB struct {
 	options    Options
 	mu         *sync.RWMutex             // 并发访问安全，读写锁
+	fileIds    []int                     // 文件 id 只能在加载索引的时候使用，不能在其他的地方更新和使用
 	activeFile *data.DataFile            // 当前活跃文件，可以用于写入
 	olderFiles map[uint32]*data.DataFile // 旧的数据文件，只能用于读
 	index      index.Indexer             // 内存索引
+}
+
+// Open 打开 tiny kv 存储引擎实例方法
+func Open(options Options) (*DB, error) {
+	// 对用户传入的配置项进行校验
+	if err := checkOptions(options); err != nil {
+		return nil, err
+	}
+
+	// 判断数据目录是否存在，如果不存在的话，就进行创建目录
+	if _, err := os.Stat(options.DirPath); os.IsNotExist(err) {
+		if err := os.Mkdir(options.DirPath, os.ModePerm); err != nil {
+			return nil, err
+		}
+	}
+
+	// 初始化 DB 实例结构体
+	db := &DB{
+		options:    options,
+		mu:         new(sync.RWMutex),
+		olderFiles: make(map[uint32]*data.DataFile),
+		index:      index.NewIndexer(options.IndexType),
+	}
+
+	// 加载对应的数据文件
+	if err := db.loadDataFiles(); err != nil {
+		return nil, err
+	}
+
+	// 从数据文件中加载索引的方法
+	if err := db.loadIndexFromDataFiles(); err != nil {
+		return nil, err
+	}
+	return db, nil
 }
 
 // Put 写入 Key/Value 相关数据，Key 不能为空
@@ -77,7 +118,7 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 	}
 
 	// 根据偏移量 offset 读取对应数据
-	logRecord, err := dataFile.ReadLogRecord(logRecordPos.Offset)
+	logRecord, _, err := dataFile.ReadLogRecord(logRecordPos.Offset)
 	if err != nil {
 		return nil, err
 	}
@@ -159,5 +200,121 @@ func (db *DB) setActiveFile() error {
 
 	// 传递数据文件
 	db.activeFile = dataFile
+	return nil
+}
+
+// 从磁盘中加载数据文件
+func (db *DB) loadDataFiles() error {
+	dirEntries, err := os.ReadDir(db.options.DirPath)
+	if err != nil {
+		return err
+	}
+
+	// 数据文件标识
+	var fileIds []int
+	// 遍历目录中的所有文件，找到所有以 .data 数据结尾的文件
+	for _, entry := range dirEntries {
+		// 后缀名结尾
+		if strings.HasSuffix(entry.Name(), data.DataFileNameSuffix) {
+			// 0000001.data，取前面部分进行解析
+			splitNames := strings.Split(entry.Name(), ".")
+			fileId, err := strconv.Atoi(splitNames[0])
+			// 数据目录可能被损坏
+			if err != nil {
+				return ErrDataDirectoryCorrupted
+			}
+			// 追加写入
+			fileIds = append(fileIds, fileId)
+		}
+	}
+
+	// 对文件 id 进行排序，需要从小到大一次加载
+	sort.Ints(fileIds)
+	// 进行赋值
+	db.fileIds = fileIds
+
+	// 遍历每一个文件 id，打开对应的数据文件
+	for i, fid := range fileIds {
+		dataFile, err := data.OpenDataFile(db.options.DirPath, uint32(fid))
+		if err != nil {
+			return err
+		}
+		// 判断是否是活跃文件，最后一个 id 最大的，就是当前的活跃文件
+		if i == len(fileIds)-1 {
+			db.activeFile = dataFile
+		} else {
+			// 说明是旧的数据文件
+			db.olderFiles[uint32(fid)] = dataFile
+		}
+	}
+	return nil
+}
+
+// 从数据文件中加载索引，遍历文件中的所有记录，并更新到内存索引中
+func (db *DB) loadIndexFromDataFiles() error {
+	// 没有文件，说明数据库是空的，直接返回
+	if len(db.fileIds) == 0 {
+		return nil
+	}
+
+	// 遍历所有的文件id，处理文件中的记录
+	for i, fid := range db.fileIds {
+		var fileId = uint32(fid)
+		var dataFile *data.DataFile
+		// 如果是当前的活跃文件
+		if fileId == db.activeFile.FileId {
+			dataFile = db.activeFile
+		} else {
+			// 从旧的数据文件当中查找
+			dataFile = db.olderFiles[fileId]
+		}
+
+		// 偏移量
+		var offset int64 = 0
+		// 循环处理文件当中的内容
+		for {
+			logRecord, size, err := dataFile.ReadLogRecord(offset)
+			// 不能直接进行返回
+			if err != nil {
+				// 都读完了就跳出循环
+				if err == io.EOF {
+					break
+				}
+				return err
+			}
+
+			// 构造内存索引并保存
+			logRecordPos := &data.LogRecordPos{Fid: fileId, Offset: offset}
+			// 如果是删除类型数据
+			if logRecord.Type == data.LogRecordDeleted {
+				db.index.Delete(logRecord.Key)
+			} else {
+				// 不是删除类型就进行写入，保存到索引当中
+				db.index.Put(logRecord.Key, logRecordPos)
+			}
+
+			// 递增 offset，下一次从新的位置开始读取
+			offset += size
+		}
+
+		// 如果是当前活跃文件，更新这个文件的 WriteOff
+		if i == len(db.fileIds)-1 {
+			// 记录偏移
+			db.activeFile.WriteOff = offset
+		}
+	}
+	return nil
+}
+
+// 检查传入配置项的校验
+func checkOptions(options Options) error {
+	// 目录文件为空
+	if options.DirPath == "" {
+		return errors.New("database dir is empty")
+	}
+	// 数据文件大小无效
+	if options.DataFileSize <= 0 {
+		return errors.New("database data file size must be greater than zero")
+	}
 	return nil
 }
