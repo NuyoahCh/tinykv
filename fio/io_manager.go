@@ -1,5 +1,8 @@
 package fio
 
+// DataFilePerm 数据文件访问常量
+const DataFilePerm = 0644
+
 // IOManager 抽象 IO 管理接口，可接入不同的 IO 类型
 type IOManager interface {
 	// Read 从文件的给定位置读取对应的数据
