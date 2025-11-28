@@ -42,8 +42,21 @@ func OpenDataFile(dirPath string, fileId uint32) (*DataFile, error) {
 
 // ReadLogRecord 根据 offset 从数据文件中读取 LogRecord
 func (df *DataFile) ReadLogRecord(offset int64) (*LogRecord, int64, error) {
+	// 获取到当前文件大小
+	fileSize, err := df.IoManager.Size()
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// 如果读取的最大 header 长度已经超过了文件的长度，这只需要读取到文件的末尾即可
+	var headerBytes int64 = maxLogRecordHeaderSize
+	// 如果已经超过了文件的长度，不然会产生错误
+	if offset+maxLogRecordHeaderSize > fileSize {
+		headerBytes = fileSize - offset
+	}
+
 	// 读取 Handler 信息
-	headerBuf, err := df.readNBytes(maxLogRecordHeaderSize, offset)
+	headerBuf, err := df.readNBytes(headerBytes, offset)
 	if err != nil {
 		return nil, 0, err
 	}
