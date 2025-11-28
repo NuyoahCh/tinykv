@@ -13,3 +13,18 @@ type DataFile struct {
 func OpenDataFile(dirPath string, fileId uint32) (*DataFile, error) {
 	return nil, nil
 }
+
+// ReadLogRecord 读取数据日志记录
+func (df *DataFile) ReadLogRecord(offset int64) (*LogRecord, error) {
+	return nil, nil
+}
+
+// Write 文件写入方法
+func (df *DataFile) Write(buf []byte) error {
+	return nil
+}
+
+// Sync 持久化文件操作
+func (df *DataFile) Sync() error {
+	return nil
+}
