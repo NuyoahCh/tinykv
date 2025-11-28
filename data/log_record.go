@@ -45,3 +45,8 @@ func EncodeLogRecord(logRecord *LogRecord) ([]byte, int64) {
 func decodeLogRecordHeader(buf []byte) (*logRecordHeader, int64) {
 	return nil, 0
 }
+
+// 校验 CRC 数值
+func getLogRecordCRC(lr *LogRecord, header []byte) uint32 {
+	return 0
+}
