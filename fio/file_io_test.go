@@ -2,6 +2,7 @@ package fio
 
 import (
 	"github.com/stretchr/testify/assert"
+	"log"
 	"os"
 	"path/filepath"
 	"testing"
@@ -16,6 +17,7 @@ func destroyFile(name string) {
 // 创建新的 File 文件
 func TestNewFileIOManager(t *testing.T) {
 	path := filepath.Join("/tmp", "a.data")
+	log.Println(path) // 打印 File 创建路径
 	fio, err := NewFileIOManager(path)
 	defer destroyFile(path)
 
@@ -36,7 +38,7 @@ func TestFileIO_Write(t *testing.T) {
 	assert.Equal(t, 0, n)
 	assert.Nil(t, err)
 
-	n, err = fio.Write([]byte("tiny kv kv"))
+	n, err = fio.Write([]byte("tiny kv"))
 	assert.Equal(t, 7, n)
 	assert.Nil(t, err)
 
