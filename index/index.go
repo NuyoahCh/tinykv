@@ -18,6 +18,31 @@ type Indexer interface {
 	Delete(key []byte) bool
 }
 
+// IndexType 索引类型枚举
+type IndexType = int8
+
+const (
+	// Btree 索引
+	Btree IndexType = iota + 1
+
+	// ART 自适应基数树索引
+	ART
+)
+
+// NewIndexer 根据类型初始化索引
+func NewIndexer(typ IndexType) Indexer {
+	switch typ {
+	case Btree:
+		return NewBTree()
+	case ART:
+		// todo 待实现 ART 自适应基数树索引
+		return nil
+	default:
+		// panic 返回
+		panic("unsupported index type")
+	}
+}
+
 // Item 自定义 google btree 中 Item 结构
 type Item struct {
 	key []byte
