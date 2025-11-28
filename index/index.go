@@ -1,6 +1,10 @@
 package index
 
-import "github.com/Nuyoahch/tinykv/data"
+import (
+	"bytes"
+	"github.com/Nuyoahch/tinykv/data"
+	"github.com/google/btree"
+)
 
 // Indexer 抽象索引接口，后续接入其他的数据结构，可直接实现这个接口
 type Indexer interface {
@@ -12,4 +16,16 @@ type Indexer interface {
 
 	// Delete 根据 key 删除对应的索引位置信息
 	Delete(key []byte) bool
+}
+
+// Item 自定义 google btree 中 Item 结构
+type Item struct {
+	key []byte
+	pos *data.LogRecordPos
+}
+
+// Less 实现比较规则的方法
+func (ai *Item) Less(bi btree.Item) bool {
+	// 实现比较规则
+	return bytes.Compare(ai.key, bi.(*Item).key) == -1
 }
