@@ -17,7 +17,7 @@ type DB struct {
 	index      index.Indexer             // 内存索引
 }
 
-// Put 写入 Key/Value 相关数据，Key不能为空
+// Put 写入 Key/Value 相关数据，Key 不能为空
 func (db *DB) Put(key []byte, value []byte) error {
 	// 判断 key 是否有效
 	if len(key) == 0 {
