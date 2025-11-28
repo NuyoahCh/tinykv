@@ -2,6 +2,9 @@ package data
 
 import "github.com/Nuyoahch/tinykv/fio"
 
+// DataFileNameSuffix data 文件后缀常量
+const DataFileNameSuffix = ".data"
+
 // DataFile 数据文件
 type DataFile struct {
 	FileId    uint32        // 文件id
@@ -15,8 +18,8 @@ func OpenDataFile(dirPath string, fileId uint32) (*DataFile, error) {
 }
 
 // ReadLogRecord 读取数据日志记录
-func (df *DataFile) ReadLogRecord(offset int64) (*LogRecord, error) {
-	return nil, nil
+func (df *DataFile) ReadLogRecord(offset int64) (*LogRecord, int64, error) {
+	return nil, 0, nil
 }
 
 // Write 文件写入方法
