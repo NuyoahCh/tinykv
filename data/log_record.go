@@ -1,5 +1,7 @@
 package data
 
+import "encoding/binary"
+
 type LogRecordType = byte
 
 // 初始化相关类型参数
@@ -9,6 +11,9 @@ const (
 	// LogRecordDeleted 针对数据删除的类型
 	LogRecordDeleted
 )
+
+// crc type keySize valueSize -> 4 + 1 + 5 + 5 = 15
+const maxLogRecordHeaderSize = binary.MaxVarintLen32*2 + 5
 
 // LogRecord 写入到数据文件的记录
 type LogRecord struct {
