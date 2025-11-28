@@ -39,3 +39,12 @@ func (fio *FileIO) Sync() error {
 func (fio *FileIO) Close() error {
 	return fio.fd.Close()
 }
+
+// Size 获取文件大小
+func (fio *FileIO) Size() (int64, error) {
+	stat, err := fio.fd.Stat()
+	if err != nil {
+		return 0, err
+	}
+	return stat.Size(), nil
+}
