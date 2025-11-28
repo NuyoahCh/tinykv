@@ -13,6 +13,15 @@ type BTree struct {
 	lock *sync.RWMutex // 加锁保护
 }
 
+// NewBtree 初始化 BTree 索引结构
+func NewBtree() *BTree {
+	return &BTree{
+		// 初始化叶子结点的数量，可根据业务进行选择
+		tree: btree.New(32),
+		lock: new(sync.RWMutex),
+	}
+}
+
 // Put 向索引中存储 key 对应的数据位置信息
 func (bt *BTree) Put(key []byte, pos *data.LogRecordPos) bool {
 	it := &Item{key: key, pos: pos}
