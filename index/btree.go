@@ -50,6 +50,8 @@ func (bt *BTree) Delete(key []byte) bool {
 	bt.lock.Lock()
 	// 删除操作
 	oldItem := bt.tree.Delete(it)
+	// opt：忘记解锁操作
+	bt.lock.Unlock()
 	if oldItem == nil {
 		return false
 	}
