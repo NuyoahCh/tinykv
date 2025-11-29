@@ -65,7 +65,7 @@ func (db *DB) Merge() error {
 
 	mergePath := db.getMergeDirPath()
 	// 目录存在则删除
-	if _, err := os.Stat(mergePath); os.IsExist(err) {
+	if _, err := os.Stat(mergePath); err == nil {
 		if err := os.RemoveAll(mergePath); err != nil {
 			return err
 		}
@@ -110,7 +110,7 @@ func (db *DB) Merge() error {
 					return err
 				}
 				// 写 Hint 索引信息
-				if err := hintFile.WriteHintRecord(logRecord.Key, pos); err != nil {
+				if err := hintFile.WriteHintRecord(realKey, pos); err != nil {
 					return err
 				}
 			}
@@ -187,8 +187,11 @@ func (db *DB) loadMergeFiles() error {
 	var fileId uint32 = 0
 	for ; fileId < nonMergeFileId; fileId++ {
 		fileName := data.GetDataFileName(db.options.DirPath, fileId)
-		// 打印删除文件名
-		println("删除文件 ：", fileNames)
+		if _, err := os.Stat(fileName); err != nil {
+			if err := os.Remove(fileName); err != nil {
+				return err
+			}
+		}
 		if err := os.Remove(fileName); err != nil {
 			return err
 		}
