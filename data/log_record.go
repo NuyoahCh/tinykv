@@ -41,7 +41,7 @@ type LogRecordPos struct {
 	Offset int64  // 位置偏移，表示数据存储文件的位置
 }
 
-// TransactionRecord 事务完成标记记录
+// TransactionRecord 暂存的事务相关的数据
 type TransactionRecord struct {
 	Record *LogRecord
 	Pos    *LogRecordPos
