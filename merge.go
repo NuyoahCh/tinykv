@@ -187,6 +187,8 @@ func (db *DB) loadMergeFiles() error {
 	var fileId uint32 = 0
 	for ; fileId < nonMergeFileId; fileId++ {
 		fileName := data.GetDataFileName(db.options.DirPath, fileId)
+		// 打印删除文件名
+		println("删除文件 ：", fileNames)
 		if err := os.Remove(fileName); err != nil {
 			return err
 		}
