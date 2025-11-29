@@ -3,7 +3,9 @@ package tinykv
 import (
 	"errors"
 	"github.com/Nuyoahch/tinykv/data"
+	"github.com/Nuyoahch/tinykv/fio"
 	"github.com/Nuyoahch/tinykv/index"
+	"github.com/gofrs/flock"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,7 +17,10 @@ import (
 
 // 存放面向用户的操作接口
 
-const SeqNoKey = "seq.no"
+const (
+	seqNoKey     = "seq.no"
+	fileLockName = "flock"
+)
 
 // DB tiny kv 存储引擎实例
 type DB struct {
@@ -27,8 +32,10 @@ type DB struct {
 	index         index.Indexer             // 内存索引
 	seqNo         uint64                    // 事务序列号，全局递增 atomic
 	isMerging     bool                      // 是否正在 merge
-	initial       bool                      // 是否是第一次初始化这个目录
+	isInitial     bool                      // 是否是第一次初始化这个目录
 	seqFileExists bool                      // seq 文件存在
+	fileLock      *flock.Flock              // 文件锁
+	bytesWrite    int                       // 当前累计写了多少个字节
 }
 
 // Open 打开 tiny kv 存储引擎实例方法
@@ -38,13 +45,23 @@ func Open(options Options) (*DB, error) {
 		return nil, err
 	}
 
-	var initial = false
+	var isInitial = false
 	// 判断数据目录是否存在，如果不存在的话，就进行创建目录
 	if _, err := os.Stat(options.DirPath); os.IsNotExist(err) {
-		initial = true
+		isInitial = true
 		if err := os.Mkdir(options.DirPath, os.ModePerm); err != nil {
 			return nil, err
 		}
+	}
+
+	// 判断是否正在使用
+	fileLock := flock.New(filepath.Join(options.DirPath, fileLockName))
+	hold, err := fileLock.TryLock()
+	if err != nil {
+		return nil, err
+	}
+	if !hold {
+		return nil, ErrDatabaseIsUsing
 	}
 
 	// 初始化 DB 实例结构体
@@ -53,7 +70,8 @@ func Open(options Options) (*DB, error) {
 		mu:         new(sync.RWMutex),
 		olderFiles: make(map[uint32]*data.DataFile),
 		index:      index.NewIndexer(options.IndexType, options.DirPath, options.SyncWrites),
-		initial:    initial,
+		isInitial:  isInitial,
+		fileLock:   fileLock,
 	}
 
 	// 加载 merge 文件
@@ -77,6 +95,13 @@ func Open(options Options) (*DB, error) {
 		if err := db.loadIndexFromDataFiles(); err != nil {
 			return nil, err
 		}
+
+		// 重置数据文件的 IO 类型
+		if db.options.MMapAtStartup {
+			if err := db.resetDataFileIoType(); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	if db.options.IndexType == BPlusTree {
@@ -90,6 +115,9 @@ func Open(options Options) (*DB, error) {
 
 // Close 关闭数据库
 func (db *DB) Close() error {
+	defer func() {
+		_ = db.fileLock.Unlock()
+	}()
 	// 活跃文件为空
 	if db.activeFile == nil {
 		return nil
@@ -104,7 +132,7 @@ func (db *DB) Close() error {
 		return err
 	}
 	record := &data.LogRecord{
-		Key:   []byte(SeqNoKey),
+		Key:   []byte(seqNoKey),
 		Value: []byte(strconv.FormatUint(db.seqNo, 10)),
 	}
 	encRecord, _ := data.EncodeLogRecord(record)
@@ -337,10 +365,18 @@ func (db *DB) appendLogRecord(logRecord *data.LogRecord) (*data.LogRecordPos, er
 		return nil, err
 	}
 
+	db.bytesWrite += int(size)
 	// 根据用户配置决定是否持久化
-	if db.options.SyncWrites {
+	var needSync = db.options.SyncWrites
+	if !needSync && db.options.BytesPerSync > 0 && db.bytesWrite >= db.options.BytesPerSync {
+		needSync = true
+	}
+	if needSync {
 		if err := db.activeFile.Sync(); err != nil {
 			return nil, err
+		}
+		if db.bytesWrite > 0 {
+			db.bytesWrite = 0
 		}
 	}
 
@@ -360,7 +396,7 @@ func (db *DB) setActiveDataFile() error {
 	}
 
 	// 打开新的数据文件
-	dataFile, err := data.OpenDataFile(db.options.DirPath, initialFileId)
+	dataFile, err := data.OpenDataFile(db.options.DirPath, initialFileId, fio.StandardFile)
 	if err != nil {
 		return err
 	}
@@ -402,7 +438,11 @@ func (db *DB) loadDataFiles() error {
 
 	// 遍历每一个文件 id，打开对应的数据文件
 	for i, fid := range fileIds {
-		dataFile, err := data.OpenDataFile(db.options.DirPath, uint32(fid))
+		var ioType = fio.StandardFile
+		if db.options.MMapAtStartup {
+			ioType = fio.MemoryMap
+		}
+		dataFile, err := data.OpenDataFile(db.options.DirPath, uint32(fid), ioType)
 		if err != nil {
 			return err
 		}
@@ -575,6 +615,32 @@ func checkOptions(options Options) error {
 	// 数据文件大小无效
 	if options.DataFileSize <= 0 {
 		return errors.New("database data file size must be greater than zero")
+	}
+	return nil
+}
+
+// 重设文件 IO 类型
+func (db *DB) resetDataFileIoType() error {
+	if db.activeFile == nil {
+		return nil
+	}
+	if err := db.activeFile.IoManager.Close(); err != nil {
+		return err
+	}
+	ioManager, err := fio.NewFileIOManager(data.GetDataFileName(db.options.DirPath, db.activeFile.FileId))
+	if err != nil {
+		return err
+	}
+	db.activeFile.IoManager = ioManager
+	for _, file := range db.olderFiles {
+		if err := file.IoManager.Close(); err != nil {
+			return err
+		}
+		ioManager, err := fio.NewFileIOManager(data.GetDataFileName(db.options.DirPath, file.FileId))
+		if err != nil {
+			return err
+		}
+		file.IoManager = ioManager
 	}
 	return nil
 }

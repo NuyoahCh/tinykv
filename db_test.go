@@ -5,6 +5,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"os"
 	"testing"
+	"time"
 )
 
 // 测试完成之后销毁 DB 数据目录
@@ -302,21 +303,46 @@ func TestDB_Sync(t *testing.T) {
 // 合并操作
 func TestDB_Merge(t *testing.T) {
 	opts := DefaultOptions
-	//dir, _ := os.MkdirTemp("", "bitcask-go-put")
-	dir := "/tmp/bitcask-go-go"
+	//dir, _ := os.MkdirTemp("", "bitcask-go")
+	dir := "/tmp/bitcask-go"
 	opts.DirPath = dir
-	opts.IndexType = BPlusTree
+	opts.DataFileSize = 1024 * 1024 * 1024
+	opts.MMapAtStartup = false
+
+	now := time.Now()
 	db, err := Open(opts)
+	t.Log("open time : ", time.Since(now))
 	//defer destroyDB(db)
 	assert.Nil(t, err)
 	assert.NotNil(t, db)
 
-	// 1.正常 Put 一条数据
-	//for i := 0; i < 10000; i++ {
-	//	err = db.Put(utils.GetTestKey(i), utils.RandomValue(124))
-	//	assert.Nil(t, err)
+	keys := db.ListKeys()
+	t.Log(len(keys))
+
+	//now = time.Now()
+	//for i := 0; i < 450000; i++ {
+	//	db.Put(utils.GetTestKey(i), utils.RandomValue(1024))
 	//}
-	val, err := db.Get(utils.GetTestKey(7783))
-	t.Log(string(val))
-	t.Log(err)
+	//t.Log("write time : ", time.Since(now))
+}
+
+// 文件锁测试
+func TestDB_FileLock(t *testing.T) {
+	opts := DefaultOptions
+	dir, _ := os.MkdirTemp("", "bitcask-go-flock")
+	opts.DirPath = dir
+	db, err := Open(opts)
+	defer destroyDB(db)
+	assert.Nil(t, err)
+	assert.NotNil(t, db)
+
+	_, err = Open(opts)
+	assert.Equal(t, ErrDatabaseIsUsing, err)
+
+	err = db.Close()
+	assert.Nil(t, err)
+	db2, err := Open(opts)
+	assert.Nil(t, err)
+	assert.NotNil(t, db2)
+	_ = db2.Close()
 }
