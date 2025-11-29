@@ -15,16 +15,20 @@ import (
 
 // 存放面向用户的操作接口
 
+const SeqNoKey = "seq.no"
+
 // DB tiny kv 存储引擎实例
 type DB struct {
-	options    Options
-	mu         *sync.RWMutex             // 并发访问安全，读写锁
-	fileIds    []int                     // 文件 id 只能在加载索引的时候使用，不能在其他的地方更新和使用
-	activeFile *data.DataFile            // 当前活跃文件，可以用于写入
-	olderFiles map[uint32]*data.DataFile // 旧的数据文件，只能用于读
-	index      index.Indexer             // 内存索引
-	seqNo      uint64                    // 事务序列号，全局递增 atomic
-	isMerging  bool                      // 是否正在 merge
+	options       Options
+	mu            *sync.RWMutex             // 并发访问安全，读写锁
+	fileIds       []int                     // 文件 id 只能在加载索引的时候使用，不能在其他的地方更新和使用
+	activeFile    *data.DataFile            // 当前活跃文件，可以用于写入
+	olderFiles    map[uint32]*data.DataFile // 旧的数据文件，只能用于读
+	index         index.Indexer             // 内存索引
+	seqNo         uint64                    // 事务序列号，全局递增 atomic
+	isMerging     bool                      // 是否正在 merge
+	initial       bool                      // 是否是第一次初始化这个目录
+	seqFileExists bool                      // seq 文件存在
 }
 
 // Open 打开 tiny kv 存储引擎实例方法
@@ -34,8 +38,10 @@ func Open(options Options) (*DB, error) {
 		return nil, err
 	}
 
+	var initial = false
 	// 判断数据目录是否存在，如果不存在的话，就进行创建目录
 	if _, err := os.Stat(options.DirPath); os.IsNotExist(err) {
+		initial = true
 		if err := os.Mkdir(options.DirPath, os.ModePerm); err != nil {
 			return nil, err
 		}
@@ -47,6 +53,7 @@ func Open(options Options) (*DB, error) {
 		mu:         new(sync.RWMutex),
 		olderFiles: make(map[uint32]*data.DataFile),
 		index:      index.NewIndexer(options.IndexType, options.DirPath, options.SyncWrites),
+		initial:    initial,
 	}
 
 	// 加载 merge 文件
@@ -72,6 +79,12 @@ func Open(options Options) (*DB, error) {
 		}
 	}
 
+	if db.options.IndexType == BPlusTree {
+		if err := db.loadSeqNo(); err != nil {
+			return nil, err
+		}
+	}
+
 	return db, nil
 }
 
@@ -84,6 +97,23 @@ func (db *DB) Close() error {
 	// 处理并发操作
 	db.mu.Lock()
 	defer db.mu.Unlock()
+
+	// 写当前事务序列号到文件中
+	seqNoFile, err := data.OpenSeqNoFile(db.options.DirPath)
+	if err != nil {
+		return err
+	}
+	record := &data.LogRecord{
+		Key:   []byte(SeqNoKey),
+		Value: []byte(strconv.FormatUint(db.seqNo, 10)),
+	}
+	encRecord, _ := data.EncodeLogRecord(record)
+	if err := seqNoFile.Write(encRecord); err != nil {
+		return err
+	}
+	if err := seqNoFile.Sync(); err != nil {
+		return err
+	}
 
 	// 关闭当前活跃文件
 	if err := db.activeFile.Close(); err != nil {
@@ -505,6 +535,35 @@ func (db *DB) loadIndexFromDataFiles() error {
 	// 更新当前最新的序列号
 	db.seqNo = currentSeqNo
 	return nil
+}
+
+// 加载事务序列号
+func (db *DB) loadSeqNo() error {
+	// 获取文件名
+	seqNoFileName := filepath.Join(db.options.DirPath, data.SeqNoFileName)
+	if _, err := os.Stat(seqNoFileName); os.IsNotExist(err) {
+		return nil
+	}
+
+	// 打开文件
+	seqNoFile, err := data.OpenSeqNoFile(db.options.DirPath)
+	if err != nil {
+		return err
+	}
+	record, _, err := seqNoFile.ReadLogRecord(0)
+	if err != nil {
+		return err
+	}
+
+	seqNo, err := strconv.ParseUint(string(record.Value), 10, 64)
+	if err != nil {
+		return err
+	}
+	db.seqNo = seqNo
+	db.seqFileExists = true
+
+	// 删除这个文件，避免一直追加写入
+	return os.Remove(seqNoFileName)
 }
 
 // 检查传入配置项的校验

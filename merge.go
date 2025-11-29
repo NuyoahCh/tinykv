@@ -168,12 +168,15 @@ func (db *DB) loadMergeFiles() error {
 
 	//	遍历查找是否完成了 merge
 	var mergeFinished bool
-	var fileNames []string
+	var mergeFileNames []string
 	for _, entry := range dirEntries {
 		if entry.Name() == data.MergeFinishedFileName {
 			mergeFinished = true
 		}
-		fileNames = append(fileNames, entry.Name())
+		if entry.Name() == data.SeqNoFileName {
+			continue
+		}
+		mergeFileNames = append(mergeFileNames, entry.Name())
 	}
 	if !mergeFinished {
 		return nil
@@ -198,7 +201,7 @@ func (db *DB) loadMergeFiles() error {
 	}
 
 	// 移动文件
-	for _, fileName := range fileNames {
+	for _, fileName := range mergeFileNames {
 		srcPath := filepath.Join(mergePath, fileName)
 		destPath := filepath.Join(db.options.DirPath, fileName)
 		if err := os.Rename(srcPath, destPath); err != nil {

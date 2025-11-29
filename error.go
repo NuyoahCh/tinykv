@@ -11,4 +11,5 @@ var (
 	ErrDataDirectoryCorrupted = errors.New("the database directory maybe corrupted")
 	ErrExceedMaxBatchNum      = errors.New("exceed the max write batch num")
 	ErrMergeInProgress        = errors.New("merge is in progress, try again later")
+	ErrWriteBatchCannotUse    = errors.New("cannot use write batch, no seq no file")
 )

@@ -2,6 +2,7 @@ package tinykv
 
 import (
 	"encoding/binary"
+	"fmt"
 	"github.com/Nuyoahch/tinykv/data"
 	"sync"
 	"sync/atomic"
@@ -23,6 +24,11 @@ type WriteBatch struct {
 
 // NewWriteBatch 初始化 WriteBatch 结构体
 func (db *DB) NewWriteBatch(options WriteBatchOptions) *WriteBatch {
+	if db.options.IndexType == BPlusTree &&
+		!db.seqFileExists &&
+		!db.initial {
+		panic(fmt.Sprintf("cannot use write batch: %v", ErrWriteBatchCannotUse))
+	}
 	return &WriteBatch{
 		options:       options,
 		mu:            new(sync.Mutex),
