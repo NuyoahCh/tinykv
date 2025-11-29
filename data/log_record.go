@@ -13,6 +13,8 @@ const (
 	LogRecordNormal LogRecordType = iota
 	// LogRecordDeleted 针对数据删除的类型
 	LogRecordDeleted
+	// LogRecordTxnFinished 事务完成标记记录
+	LogRecordTxnFinished
 )
 
 // crc type keySize valueSize -> 4 + 1 + 5 + 5 = 15
@@ -37,6 +39,12 @@ type logRecordHeader struct {
 type LogRecordPos struct {
 	Fid    uint32 // 文件 id，表示数据存储的文件标识
 	Offset int64  // 位置偏移，表示数据存储文件的位置
+}
+
+// TransactionRecord 事务完成标记记录
+type TransactionRecord struct {
+	Record *LogRecord
+	Pos    *LogRecordPos
 }
 
 // EncodeLogRecord 对 LogRecord 进行编码，返回字节数组及长度
