@@ -298,3 +298,25 @@ func TestDB_Sync(t *testing.T) {
 	err = db.Sync()
 	assert.Nil(t, err)
 }
+
+// 合并操作
+func TestDB_Merge(t *testing.T) {
+	opts := DefaultOptions
+	//dir, _ := os.MkdirTemp("", "bitcask-go-put")
+	dir := "/tmp/bitcask-go-go"
+	opts.DirPath = dir
+	opts.IndexType = BPlusTree
+	db, err := Open(opts)
+	//defer destroyDB(db)
+	assert.Nil(t, err)
+	assert.NotNil(t, db)
+
+	// 1.正常 Put 一条数据
+	//for i := 0; i < 10000; i++ {
+	//	err = db.Put(utils.GetTestKey(i), utils.RandomValue(124))
+	//	assert.Nil(t, err)
+	//}
+	val, err := db.Get(utils.GetTestKey(7783))
+	t.Log(string(val))
+	t.Log(err)
+}
