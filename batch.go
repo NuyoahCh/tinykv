@@ -87,7 +87,7 @@ func (wb *WriteBatch) Commit() error {
 	positions := make(map[string]*data.LogRecordPos)
 	for _, record := range wb.pendingWrites {
 		logRecordPos, err := wb.db.appendLogRecord(&data.LogRecord{
-			Key:   logRecordKeyWithSeqNo(record.Key, seqNo),
+			Key:   logRecordKeyWithSeq(record.Key, seqNo),
 			Value: record.Value,
 			Type:  record.Type,
 		})
@@ -99,7 +99,7 @@ func (wb *WriteBatch) Commit() error {
 
 	// 写标识事务完成的数据
 	finishedRecord := &data.LogRecord{
-		Key:  logRecordKeyWithSeqNo(txnFinKey, seqNo),
+		Key:  logRecordKeyWithSeq(txnFinKey, seqNo),
 		Type: data.LogRecordTxnFinished,
 	}
 	if _, err := wb.db.appendLogRecord(finishedRecord); err != nil {
@@ -130,8 +130,8 @@ func (wb *WriteBatch) Commit() error {
 	return nil
 }
 
-// logRecordKeyWithSeqNo 将事务序列号 seqNo 和真实 key 打包成一个新的 key： [seqNo 的变长编码字节][原始 key 字节]
-func logRecordKeyWithSeqNo(key []byte, seqNo uint64) []byte {
+// logRecordKeyWithSeq 将事务序列号 seqNo 和真实 key 打包成一个新的 key： [seqNo 的变长编码字节][原始 key 字节]
+func logRecordKeyWithSeq(key []byte, seqNo uint64) []byte {
 	// 先用 varint 把 seqNo 编成字节
 	seq := make([]byte, binary.MaxVarintLen64)
 	n := binary.PutUvarint(seq[:], seqNo)
