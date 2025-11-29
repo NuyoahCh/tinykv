@@ -1,20 +1,31 @@
 package tinykv
 
 import (
-	"os"
-	"path"
+	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
 func TestDB_Merge(t *testing.T) {
-	p := "/tmp/a/b"
+	opts := DefaultOptions
+	//dir, _ := os.MkdirTemp("", "bitcask-go-get")
+	dir := "/tmp/bitcask-go-merge-1"
+	opts.DirPath = dir
+	opts.DataFileSize = 64 * 1024 * 1024
+	db, err := Open(opts)
+	//defer destroyDB(db)
+	assert.Nil(t, err)
+	assert.NotNil(t, db)
 
-	//p = path.Clean(p)
-	t.Log(path.Dir(p))
-	t.Log(path.Base(p))
-
-	entries, _ := os.ReadDir("/tmp/a")
-	for _, entry := range entries {
-		t.Log(entry.Name())
-	}
+	//for i := 0; i < 500000; i++ {
+	//	db.Put(utils.GetTestKey(i), utils.RandomValue(128))
+	//}
+	//for i := 0; i < 500000; i++ {
+	//	if i == 99033 {
+	//		db.Put(utils.GetTestKey(i), utils.RandomValue(128))
+	//	} else {
+	//		db.Delete(utils.GetTestKey(i))
+	//	}
+	//}
+	//
+	//db.Merge()
 }
