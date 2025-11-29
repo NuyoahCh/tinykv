@@ -18,6 +18,7 @@ const (
 
 // Merge 合并操作
 func (db *DB) Merge() error {
+	// 判断活跃文件情况
 	if db.activeFile == nil {
 		return nil
 	}
@@ -96,6 +97,7 @@ func (db *DB) Merge() error {
 				}
 				return err
 			}
+			// 解析日志文件
 			realKey, _ := parseLogRecordKey(logRecord.Key)
 			logRecordPos := db.index.Get(realKey)
 			if logRecordPos != nil &&
