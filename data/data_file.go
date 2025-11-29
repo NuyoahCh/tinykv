@@ -31,9 +31,9 @@ type DataFile struct {
 // OpenDataFile 打开新的数据文件
 func OpenDataFile(dirPath string, fileId uint32) (*DataFile, error) {
 	// 完整的文件名称
-	fileName := filepath.Join(dirPath, fmt.Sprintf("%09d", fileId)+DataFileNameSuffix)
-	// 创建新的数据文件
-	return newDataFile(fileName, 0)
+	fileName := GetDataFileName(dirPath, fileId)
+	// 创建新的数据文件，bug：传入 fileId
+	return newDataFile(fileName, fileId)
 }
 
 // OpenHintFile 打开 Hint 文件
