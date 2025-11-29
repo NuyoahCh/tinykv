@@ -83,15 +83,78 @@ func (bpt *BPlusTree) Delete(key []byte) bool {
 // Size 获取元素大小操作
 func (bpt *BPlusTree) Size() int {
 	var size int
-	_ = bpt.tree.View(func(tx *bbolt.Tx) error {
+	if err := bpt.tree.View(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket(indexBucketName)
 		size = bucket.Stats().KeyN
 		return nil
-	})
+	}); err != nil {
+		panic("failed to get size in bptree")
+	}
 	return size
 }
 
 // Iterator 迭代器方法
 func (bpt *BPlusTree) Iterator(reverse bool) Iterator {
-	return nil
+	return newBptreeIterator(bpt.tree, reverse)
+}
+
+// B+ 树迭代器
+type bptreeIterator struct {
+	tx        *bbolt.Tx
+	cursor    *bbolt.Cursor
+	reverse   bool
+	currKey   []byte
+	currValue []byte
+}
+
+// 初始化 B+ 树迭代器
+func newBptreeIterator(tree *bbolt.DB, reverse bool) *bptreeIterator {
+	tx, err := tree.Begin(false)
+	if err != nil {
+		panic("failed to begin a transaction")
+	}
+
+	bi := &bptreeIterator{
+		tx:      tx,
+		cursor:  tx.Bucket(indexBucketName).Cursor(),
+		reverse: reverse,
+	}
+	bi.Rewind()
+	return bi
+}
+
+func (bi *bptreeIterator) Rewind() {
+	if bi.reverse {
+		bi.currKey, bi.currValue = bi.cursor.Last()
+	} else {
+		bi.currKey, bi.currValue = bi.cursor.First()
+	}
+}
+
+func (bi *bptreeIterator) Seek(key []byte) {
+	bi.currKey, bi.currValue = bi.cursor.Seek(key)
+}
+
+func (bi *bptreeIterator) Next() {
+	if bi.reverse {
+		bi.currKey, bi.currValue = bi.cursor.Prev()
+	} else {
+		bi.currKey, bi.currValue = bi.cursor.Next()
+	}
+}
+
+func (bi *bptreeIterator) Valid() bool {
+	return len(bi.currKey) != 0
+}
+
+func (bi *bptreeIterator) Key() []byte {
+	return bi.currKey
+}
+
+func (bi *bptreeIterator) Value() *data.LogRecordPos {
+	return data.DecodeLogRecordPos(bi.currValue)
+}
+
+func (bi *bptreeIterator) Close() {
+	_ = bi.tx.Commit()
 }
