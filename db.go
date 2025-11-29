@@ -60,7 +60,7 @@ func Open(options Options) (*DB, error) {
 	}
 
 	// B+树不需要从文件中加载索引了
-	if db.options.IndexType == BPlusTree {
+	if db.options.IndexType != BPlusTree {
 		// 从 Hint 文件中加载索引
 		if err := db.loadIndexFromHintFile(); err != nil {
 			return nil, err
