@@ -72,7 +72,7 @@ func EncodeLogRecord(logRecord *LogRecord) ([]byte, int64) {
 	// 对整个 LogRecord 的数据进行 crc 校验
 	crc := crc32.ChecksumIEEE(encBytes[4:])
 	// 小段续的方式
-	binary.LittleEndian.PutUint32(header[:4], crc)
+	binary.LittleEndian.PutUint32(encBytes[:4], crc)
 
 	// 返回对应长度
 	return encBytes, int64(size)
@@ -81,7 +81,7 @@ func EncodeLogRecord(logRecord *LogRecord) ([]byte, int64) {
 // 对字节数组中的 Handler 信息进行解码
 func decodeLogRecordHeader(buf []byte) (*logRecordHeader, int64) {
 	// 小于 4 就是不符合要求
-	if len(buf) < 4 {
+	if len(buf) <= 4 {
 		return nil, 0
 	}
 	// 初始化参数
