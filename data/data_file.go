@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 )
 
+// ErrInvalidCRC 错误类型参数
 var (
 	ErrInvalidCRC = errors.New("invalid crc value, log record maybe corrupted")
 )
