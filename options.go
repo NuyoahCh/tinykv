@@ -1,5 +1,7 @@
 package tinykv
 
+import "os"
+
 // Options 配置项结构体
 type Options struct {
 	// 数据库数据目录
@@ -20,9 +22,17 @@ type IndexerType = int8
 
 // 类型参数实现
 const (
-	// Btree 索引
-	Btree IndexerType = iota + 1
+	// BTree 索引
+	BTree IndexerType = iota + 1
 
 	// ART 自适应基数树索引
 	ART
 )
+
+// DefaultOptions 默认选项
+var DefaultOptions = Options{
+	DirPath:      os.TempDir(),
+	DataFileSize: 256 * 1024 * 1024, // 256MB
+	SyncWrites:   false,
+	IndexType:    BTree,
+}
