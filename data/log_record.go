@@ -80,10 +80,39 @@ func EncodeLogRecord(logRecord *LogRecord) ([]byte, int64) {
 
 // 对字节数组中的 Handler 信息进行解码
 func decodeLogRecordHeader(buf []byte) (*logRecordHeader, int64) {
-	return nil, 0
+	// 小于 4 就是不符合要求
+	if len(buf) < 4 {
+		return nil, 0
+	}
+	// 初始化参数
+	header := &logRecordHeader{
+		crc:        binary.LittleEndian.Uint32(buf[:4]),
+		recordType: buf[4],
+	}
+
+	// 索引位置
+	var index = 5
+	// 取出实际的 key size
+	keySize, n := binary.Varint(buf[index:])
+	header.keySize = uint32(keySize)
+	// 下次读取的位置存储
+	index += n
+
+	// 取出实际的 value size
+	valueSize, n := binary.Varint(buf[index:])
+	header.valueSize = uint32(valueSize)
+	index += n
+
+	return header, int64(index)
 }
 
 // 校验 CRC 数值
 func getLogRecordCRC(lr *LogRecord, header []byte) uint32 {
-	return 0
+	if lr == nil {
+		return 0
+	}
+	crc := crc32.ChecksumIEEE(header[:])
+	crc = crc32.Update(crc, crc32.IEEETable, lr.Key)
+	crc = crc32.Update(crc, crc32.IEEETable, lr.Value)
+	return crc
 }
