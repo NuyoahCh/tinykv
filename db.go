@@ -154,6 +154,10 @@ func (db *DB) Delete(key []byte) error {
 
 // Get 根据 Key 读取数据
 func (db *DB) Get(key []byte) ([]byte, error) {
+	// 处理并发操作
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
 	// 判断 key 的有效性
 	if len(key) == 0 {
 		return nil, ErrKeyIsEmpty
@@ -167,6 +171,46 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 		return nil, ErrKeyNotFound
 	}
 
+	// 从数据文件中获取 value 值
+	return db.getValueByPosition(logRecordPos)
+}
+
+// ListKeys 获取数据库中所有的 Key
+func (db *DB) ListKeys() [][]byte {
+	iterator := db.index.Iterator(false)
+	// 设置 key 的存储空间
+	keys := make([][]byte, db.index.Size())
+	var idx int
+	// 遍历所有 key
+	for iterator.Rewind(); iterator.Valid(); iterator.Next() {
+		keys[idx] = iterator.Key()
+		idx++
+	}
+	// 返回 key 存储数组
+	return keys
+}
+
+// Fold 获取所有的数据，并执行用户指定的操作，函数返回 false 时终止遍历
+func (db *DB) Fold(fn func(key []byte, value []byte) bool) error {
+	// 并发操作
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	iterator := db.index.Iterator(false)
+	for iterator.Rewind(); iterator.Valid(); iterator.Next() {
+		value, err := db.getValueByPosition(iterator.Value())
+		if err != nil {
+			return err
+		}
+		if !fn(iterator.Key(), value) {
+			break
+		}
+	}
+	return nil
+}
+
+// 根据索引信息获取对应的 value
+func (db *DB) getValueByPosition(logRecordPos *data.LogRecordPos) ([]byte, error) {
 	// 根据文件 id 找到对应的数据文件
 	var dataFile *data.DataFile
 	// 存在活跃的数据文件中
