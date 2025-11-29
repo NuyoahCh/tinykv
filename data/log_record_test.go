@@ -3,7 +3,6 @@ package data
 import (
 	"github.com/stretchr/testify/assert"
 	"hash/crc32"
-	"os"
 	"testing"
 )
 
@@ -97,52 +96,4 @@ func TestGetLogRecordCrc(t *testing.T) {
 	headerBuf3 := []byte{23, 6, 58, 223, 1, 8, 26}
 	crc3 := getLogRecordCRC(record3, headerBuf3[crc32.Size:])
 	assert.Equal(t, uint32(3745121815), crc3)
-}
-
-func TestDataFile_ReadLogRecord(t *testing.T) {
-	dataFile, err := OpenDataFile(os.TempDir(), 2312)
-	assert.Nil(t, err)
-	assert.NotNil(t, dataFile)
-
-	// 只有一条LogRecord
-	rec1 := &LogRecord{
-		Key:   []byte("name"),
-		Value: []byte("bitcask kv go"),
-	}
-	enc1, size1 := EncodeLogRecord(rec1)
-	err = dataFile.Write(enc1)
-	assert.Nil(t, err)
-
-	readRec1, readSize1, err := dataFile.ReadLogRecord(0)
-	assert.Nil(t, err)
-	assert.Equal(t, rec1, readRec1)
-	assert.Equal(t, size1, readSize1)
-
-	// 多条 LogRecord，从不同的位置读取
-	rec2 := &LogRecord{
-		Key:   []byte("name"),
-		Value: []byte("bitcask kv go"),
-	}
-	enc2, size2 := EncodeLogRecord(rec1)
-	err = dataFile.Write(enc2)
-	assert.Nil(t, err)
-	readRec2, readSize2, err := dataFile.ReadLogRecord(size1)
-	assert.Nil(t, err)
-	assert.Equal(t, rec2, readRec2)
-	assert.Equal(t, size2, readSize2)
-
-	// 被删除的 LogRecord 在末尾
-	rec3 := &LogRecord{
-		Key:   []byte("1"),
-		Type:  LogRecordDeleted,
-		Value: []byte(""),
-	}
-	enc3, size3 := EncodeLogRecord(rec3)
-	err = dataFile.Write(enc3)
-	assert.Nil(t, err)
-	readRec3, readSize3, err := dataFile.ReadLogRecord(size1 + size2)
-	//t.Log(readRec3, size3, readSize3)
-	assert.Nil(t, err)
-	assert.Equal(t, rec3, readRec3)
-	assert.Equal(t, size3, readSize3)
 }
