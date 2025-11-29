@@ -15,6 +15,12 @@ type Options struct {
 
 	// 索引类型
 	IndexType IndexerType
+
+	// 积累多少字节写入后进行持久化
+	BytesPerSync int
+
+	// 启动时是否使用 MMap 加载
+	MMapAtStartup bool
 }
 
 // IteratorOptions 索引迭代器配置项
@@ -51,10 +57,12 @@ const (
 
 // DefaultOptions 默认选项
 var DefaultOptions = Options{
-	DirPath:      os.TempDir(),
-	DataFileSize: 256 * 1024 * 1024, // 256MB
-	SyncWrites:   false,
-	IndexType:    BTree,
+	DirPath:       os.TempDir(),
+	DataFileSize:  256 * 1024 * 1024, // 256MB
+	SyncWrites:    false,
+	IndexType:     BTree,
+	BytesPerSync:  0,
+	MMapAtStartup: true,
 }
 
 // DefaultIteratorOptions 默认迭代器选项
