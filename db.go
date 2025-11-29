@@ -394,7 +394,8 @@ func (db *DB) loadIndexFromDataFiles() error {
 	hasMerge, nonMergeFileId := false, uint32(0)
 	// 合并文件名称
 	mergeFileName := filepath.Join(db.options.DirPath, data.MergeFinishedFileName)
-	if _, err := os.Stat(mergeFileName); os.IsExist(err) {
+	// 修改判断逻辑
+	if _, err := os.Stat(mergeFileName); err == nil {
 		fid, err := db.getNonMergeFileId(db.options.DirPath)
 		if err != nil {
 			return err
