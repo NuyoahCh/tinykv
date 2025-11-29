@@ -6,6 +6,7 @@ import (
 	"github.com/Nuyoahch/tinykv/index"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ type DB struct {
 	olderFiles map[uint32]*data.DataFile // 旧的数据文件，只能用于读
 	index      index.Indexer             // 内存索引
 	seqNo      uint64                    // 事务序列号，全局递增 atomic
+	isMerging  bool                      // 是否正在 merge
 }
 
 // Open 打开 tiny kv 存储引擎实例方法
@@ -47,8 +49,18 @@ func Open(options Options) (*DB, error) {
 		index:      index.NewIndexer(options.IndexType),
 	}
 
+	// 加载 merge 文件
+	if err := db.loadMergeFiles(); err != nil {
+		return nil, err
+	}
+
 	// 加载对应的数据文件
 	if err := db.loadDataFiles(); err != nil {
+		return nil, err
+	}
+
+	// 从 Hint 文件中加载索引
+	if err := db.loadIndexFromHintFile(); err != nil {
 		return nil, err
 	}
 
@@ -104,7 +116,7 @@ func (db *DB) Put(key []byte, value []byte) error {
 
 	// 有效 -> 构造 LogRecord 结构体
 	logRecord := &data.LogRecord{
-		Key:   logRecordKeyWithSeqNo(key, nonTransactionSeqNo),
+		Key:   logRecordKeyWithSeq(key, nonTransactionSeqNo),
 		Value: value,
 		Type:  data.LogRecordNormal,
 	}
@@ -138,7 +150,7 @@ func (db *DB) Delete(key []byte) error {
 
 	// 构造 LogRecord，标识其是被删除的
 	logRecord := &data.LogRecord{
-		Key:  logRecordKeyWithSeqNo(key, nonTransactionSeqNo),
+		Key:  logRecordKeyWithSeq(key, nonTransactionSeqNo),
 		Type: data.LogRecordDeleted,
 	}
 
@@ -261,7 +273,7 @@ func (db *DB) appendLogRecord(logRecord *data.LogRecord) (*data.LogRecordPos, er
 
 	// 判断当前活跃数据文件是否存在，因为数据库没有写入时无文件生成，如果为空则初始化数据文件
 	if db.activeFile == nil {
-		if err := db.setActiveFile(); err != nil {
+		if err := db.setActiveDataFile(); err != nil {
 			return nil, err
 		}
 	}
@@ -280,7 +292,7 @@ func (db *DB) appendLogRecord(logRecord *data.LogRecord) (*data.LogRecordPos, er
 		db.olderFiles[db.activeFile.FileId] = db.activeFile
 
 		// 打开新的数据文件
-		if err := db.setActiveFile(); err != nil {
+		if err := db.setActiveDataFile(); err != nil {
 			return nil, err
 		}
 	}
@@ -305,7 +317,7 @@ func (db *DB) appendLogRecord(logRecord *data.LogRecord) (*data.LogRecordPos, er
 }
 
 // 设置当前活跃文件，在访问方法之前必须持有互斥锁
-func (db *DB) setActiveFile() error {
+func (db *DB) setActiveDataFile() error {
 	var initialFileId uint32 = 0
 	// 当前活跃文件不为空
 	if db.activeFile != nil {
@@ -378,6 +390,19 @@ func (db *DB) loadIndexFromDataFiles() error {
 		return nil
 	}
 
+	// 初始化变量值
+	hasMerge, nonMergeFileId := false, uint32(0)
+	// 合并文件名称
+	mergeFileName := filepath.Join(db.options.DirPath, data.MergeFinishedFileName)
+	if _, err := os.Stat(mergeFileName); os.IsExist(err) {
+		fid, err := db.getNonMergeFileId(db.options.DirPath)
+		if err != nil {
+			return err
+		}
+		hasMerge = true
+		nonMergeFileId = fid
+	}
+
 	// updateIndex 根据日志类型更新内存索引：
 	//   - 普通记录：在索引中插入/更新 key -> logRecordPos
 	//   - 删除记录：从索引中删除该 key
@@ -405,6 +430,9 @@ func (db *DB) loadIndexFromDataFiles() error {
 	// 遍历所有的文件id，处理文件中的记录
 	for i, fid := range db.fileIds {
 		var fileId = uint32(fid)
+		if hasMerge && fileId < nonMergeFileId {
+			continue
+		}
 		var dataFile *data.DataFile
 		// 如果是当前的活跃文件
 		if fileId == db.activeFile.FileId {
