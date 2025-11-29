@@ -58,6 +58,42 @@ func Open(options Options) (*DB, error) {
 	return db, nil
 }
 
+// Close 关闭数据库
+func (db *DB) Close() error {
+	// 活跃文件为空
+	if db.activeFile == nil {
+		return nil
+	}
+	// 处理并发操作
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	// 关闭当前活跃文件
+	if err := db.activeFile.Close(); err != nil {
+		return err
+	}
+
+	// 关闭旧的数据文件
+	for _, file := range db.olderFiles {
+		if err := file.Close(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Sync 持久化数据文件
+func (db *DB) Sync() error {
+	// 活跃文件为空
+	if db.activeFile == nil {
+		return nil
+	}
+	// 处理并发操作
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	return db.activeFile.Sync()
+}
+
 // Put 写入 Key/Value 相关数据，Key 不能为空
 func (db *DB) Put(key []byte, value []byte) error {
 	// 判断 key 是否有效
