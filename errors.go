@@ -12,4 +12,5 @@ var (
 	ErrExceedMaxBatchNum      = errors.New("exceed the max write batch num")
 	ErrMergeInProgress        = errors.New("merge is in progress, try again later")
 	ErrWriteBatchCannotUse    = errors.New("cannot use write batch, no seq no file")
+	ErrDatabaseIsUsing        = errors.New("database directory is using by another process")
 )
