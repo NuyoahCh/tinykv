@@ -22,6 +22,9 @@ type Indexer interface {
 
 	// Iterator 索引迭代器
 	Iterator(reverse bool) Iterator
+
+	// Close 关闭索引
+	Close() error
 }
 
 // IndexType 索引类型枚举

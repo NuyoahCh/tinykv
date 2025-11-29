@@ -98,6 +98,11 @@ func (bpt *BPlusTree) Iterator(reverse bool) Iterator {
 	return newBptreeIterator(bpt.tree, reverse)
 }
 
+// Close 关闭操作
+func (bpt *BPlusTree) Close() error {
+	return bpt.tree.Close()
+}
+
 // B+ 树迭代器
 type bptreeIterator struct {
 	tx        *bbolt.Tx
