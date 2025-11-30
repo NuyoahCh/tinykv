@@ -5,6 +5,7 @@ import (
 	"github.com/Nuyoahch/tinykv/data"
 	"github.com/Nuyoahch/tinykv/fio"
 	"github.com/Nuyoahch/tinykv/index"
+	"github.com/Nuyoahch/tinykv/utils"
 	"github.com/gofrs/flock"
 	"io"
 	"os"
@@ -24,18 +25,27 @@ const (
 
 // DB tiny kv 存储引擎实例
 type DB struct {
-	options       Options
-	mu            *sync.RWMutex             // 并发访问安全，读写锁
-	fileIds       []int                     // 文件 id 只能在加载索引的时候使用，不能在其他的地方更新和使用
-	activeFile    *data.DataFile            // 当前活跃文件，可以用于写入
-	olderFiles    map[uint32]*data.DataFile // 旧的数据文件，只能用于读
-	index         index.Indexer             // 内存索引
-	seqNo         uint64                    // 事务序列号，全局递增 atomic
-	isMerging     bool                      // 是否正在 merge
-	isInitial     bool                      // 是否是第一次初始化这个目录
-	seqFileExists bool                      // seq 文件存在
-	fileLock      *flock.Flock              // 文件锁
-	bytesWrite    int                       // 当前累计写了多少个字节
+	options         Options
+	mu              *sync.RWMutex             // 并发访问安全，读写锁
+	fileIds         []int                     // 文件 id 只能在加载索引的时候使用，不能在其他的地方更新和使用
+	activeFile      *data.DataFile            // 当前活跃文件，可以用于写入
+	olderFiles      map[uint32]*data.DataFile // 旧的数据文件，只能用于读
+	index           index.Indexer             // 内存索引
+	seqNo           uint64                    // 事务序列号，全局递增 atomic
+	isMerging       bool                      // 是否正在 merge
+	isInitial       bool                      // 是否是第一次初始化这个目录
+	seqFileExists   bool                      // seq 文件存在
+	fileLock        *flock.Flock              // 文件锁
+	bytesWrite      int                       // 当前累计写了多少个字节
+	reclaimableSize int64                     // 可回收的磁盘空间容量
+}
+
+// Stat 文件元信息
+type Stat struct {
+	KeyNum          uint  // key 的数量
+	DataFileNum     uint  // 数据文件的个数
+	ReclaimableSize int64 // 磁盘可回收的空间，字节为单位
+	DiskSize        int64 // 所占磁盘空间的大小
 }
 
 // Open 打开 tiny kv 存储引擎实例方法
@@ -169,6 +179,27 @@ func (db *DB) Sync() error {
 	return db.activeFile.Sync()
 }
 
+// Stat 返回数据库的统计信息
+func (db *DB) Stat() *Stat {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	var dataFiles = uint(len(db.olderFiles))
+	if db.activeFile != nil {
+		dataFiles += 1
+	}
+	dirSize, err := utils.DirSize(db.options.DirPath)
+	if err != nil {
+		panic(err)
+	}
+	return &Stat{
+		KeyNum:          uint(db.index.Size()),
+		DataFileNum:     dataFiles,
+		ReclaimableSize: db.reclaimableSize,
+		DiskSize:        dirSize,
+	}
+}
+
 // Put 写入 Key/Value 相关数据，Key 不能为空
 func (db *DB) Put(key []byte, value []byte) error {
 	// 判断 key 是否有效
@@ -190,9 +221,9 @@ func (db *DB) Put(key []byte, value []byte) error {
 	}
 
 	// 更新内存索引
-	if ok := db.index.Put(key, pos); !ok {
-		// 索引更新失败
-		return ErrIndexUpdateFailed
+	oldPos := db.index.Put(key, pos)
+	if oldPos != nil {
+		db.reclaimableSize += int64(oldPos.Size)
 	}
 
 	return nil
@@ -217,15 +248,20 @@ func (db *DB) Delete(key []byte) error {
 	}
 
 	// 写入到数据文件当中
-	_, err := db.appendLogRecordWithLock(logRecord)
+	pos, err := db.appendLogRecordWithLock(logRecord)
 	if err != nil {
 		return nil
 	}
+	// 可回收的磁盘容量
+	db.reclaimableSize += int64(pos.Size)
 
 	// 从内存索引中将其对应的 key 删除
-	ok := db.index.Delete(key)
+	oldPos, ok := db.index.Delete(key)
 	if !ok {
 		return ErrIndexUpdateFailed
+	}
+	if oldPos != nil {
+		db.reclaimableSize += int64(oldPos.Size)
 	}
 	return nil
 }
@@ -381,9 +417,8 @@ func (db *DB) appendLogRecord(logRecord *data.LogRecord) (*data.LogRecordPos, er
 	}
 
 	// 构造内存索引信息，进行返回
-	pos := &data.LogRecordPos{Fid: db.activeFile.FileId, Offset: writeOff}
+	pos := &data.LogRecordPos{Fid: db.activeFile.FileId, Offset: writeOff, Size: uint32(size)}
 	return pos, nil
-
 }
 
 // 设置当前活跃文件，在访问方法之前必须持有互斥锁
@@ -482,15 +517,16 @@ func (db *DB) loadIndexFromDataFiles() error {
 	//   - 普通记录：在索引中插入/更新 key -> logRecordPos
 	//   - 删除记录：从索引中删除该 key
 	// 如果更新失败（返回 false），说明索引实现出错，直接 panic。
-	updateIndex := func(key []byte, typ data.LogRecordType, logRecordPos *data.LogRecordPos) {
-		var ok bool
+	updateIndex := func(key []byte, typ data.LogRecordType, pos *data.LogRecordPos) {
+		var oldPos *data.LogRecordPos
 		if typ == data.LogRecordDeleted {
-			ok = db.index.Delete(key) // 删除类型，从索引中移除 key
+			oldPos, _ = db.index.Delete(key)
+			db.reclaimableSize += int64(pos.Size)
 		} else {
-			ok = db.index.Put(key, logRecordPos) // 其他类型，更新/插入索引
+			oldPos = db.index.Put(key, pos)
 		}
-		if !ok {
-			panic("failed to update index while startup") // 启动恢复时索引更新失败，认为是致命错误
+		if oldPos != nil {
+			db.reclaimableSize += int64(oldPos.Size)
 		}
 	}
 
@@ -532,7 +568,7 @@ func (db *DB) loadIndexFromDataFiles() error {
 			}
 
 			// 构造内存索引信息
-			pos := &data.LogRecordPos{Fid: fileId, Offset: offset}
+			pos := &data.LogRecordPos{Fid: fileId, Offset: offset, Size: uint32(size)}
 
 			// 解析 key，取出事务序列号
 			realKey, seqNo := parseLogRecordKey(logRecord.Key)
@@ -615,6 +651,10 @@ func checkOptions(options Options) error {
 	// 数据文件大小无效
 	if options.DataFileSize <= 0 {
 		return errors.New("database data file size must be greater than zero")
+	}
+	// 数据文件合并的阈值
+	if options.DataFileMergeRatio < 0 || options.DataFileMergeRatio > 1 {
+		return errors.New("invalid merge ratio, must between 0 and 1")
 	}
 	return nil
 }
