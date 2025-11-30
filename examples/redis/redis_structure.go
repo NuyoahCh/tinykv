@@ -15,30 +15,10 @@ func main() {
 		panic(err)
 	}
 
-	rds.Set([]byte("name"), 0, []byte("rose"))
+	rds.ZAdd([]byte("myzset"), 554, []byte("c"))
+	rds.ZAdd([]byte("myzset"), 84, []byte("r"))
+	rds.ZAdd([]byte("myzset"), 884, []byte("g"))
+	rds.ZAdd([]byte("myzset"), 32, []byte("v"))
 
-	val, err := rds.Get([]byte("name"))
-	if err != nil {
-		panic(err)
-	}
-	println("val = ", string(val))
-
-	// rds.HSet([]byte("myset"), []byte("f1"), []byte("rose-hset"))
-	ok, _ := rds.HDel([]byte("myset"), []byte("f1"))
-	println("ok = ", ok)
-
-	val2, err := rds.HGet([]byte("myset"), []byte("f1"))
-	if err != nil {
-		panic(err)
-	}
-	println("val2 = ", string(val2))
-
-	// rds.LPush([]byte("mylist"), []byte("aaaaa"))
-	// rds.LPush([]byte("mylist"), []byte("bbbb"))
-	// rds.LPush([]byte("mylist"), []byte("ccc"))
-	val3, err := rds.LPop([]byte("mylist"))
-	if err != nil {
-		panic(err)
-	}
-	println("val3 = ", string(val3))
+	rds.ZRange([]byte("myzset"))
 }

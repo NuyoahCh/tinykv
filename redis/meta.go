@@ -2,6 +2,7 @@ package redis
 
 import (
 	"encoding/binary"
+	"strconv"
 )
 
 const maxMetadataSize = 21
@@ -137,6 +138,54 @@ func (lk *listInternalKey) encode() []byte {
 
 	// index
 	binary.LittleEndian.PutUint64(buf[index:], lk.index)
+
+	return buf
+}
+
+type zsetInternalKey struct {
+	key     []byte
+	version int64
+	score   float64
+	member  []byte
+}
+
+// 1 : type + version + key + member + key size
+// 2 : type + version + key + score + key size
+func (zk *zsetInternalKey) encode() []byte {
+	var size = 1 + 8 + len(zk.key) + 4
+	var scoreBuf []byte
+	if zk.member != nil {
+		size += len(zk.member)
+	} else {
+		scoreBuf = []byte(strconv.FormatFloat(zk.score, 'f', -1, 64))
+		size += len(scoreBuf)
+	}
+
+	buf := make([]byte, size)
+
+	// type
+	buf[0] = ZSet
+
+	// version
+	var index = 1
+	binary.LittleEndian.PutUint64(buf[index:index+8], uint64(zk.version))
+	index += 8
+
+	// key
+	copy(buf[index:index+len(zk.key)], zk.key)
+	index += len(zk.key)
+
+	// member or score
+	if zk.member != nil {
+		copy(buf[index:index+len(zk.member)], zk.member)
+		index += len(zk.member)
+	} else {
+		copy(buf[index:index+len(scoreBuf)], scoreBuf)
+		index += len(scoreBuf)
+	}
+
+	// key size
+	binary.LittleEndian.PutUint32(buf[index:], uint32(len(zk.key)))
 
 	return buf
 }
