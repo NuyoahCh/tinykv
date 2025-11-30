@@ -13,4 +13,6 @@ var (
 	ErrMergeInProgress        = errors.New("merge is in progress, try again later")
 	ErrWriteBatchCannotUse    = errors.New("cannot use write batch, no seq no file")
 	ErrDatabaseIsUsing        = errors.New("database directory is using by another process")
+	ErrMergeRatioUnreached    = errors.New("merge ratio is unreached")
+	ErrNoEnoughDiskForMerge   = errors.New("no enough disk space for merge")
 )
