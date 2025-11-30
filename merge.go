@@ -2,6 +2,7 @@ package tinykv
 
 import (
 	"github.com/Nuyoahch/tinykv/data"
+	"github.com/Nuyoahch/tinykv/utils"
 	"io"
 	"os"
 	"path"
@@ -11,78 +12,100 @@ import (
 )
 
 // merge 相关变量
+
 const (
 	mergeDirName     = "-merge"
 	mergeFinishedKey = "merge.finished"
 )
 
-// Merge 合并操作
+// Merge 清理无效数据，生成 Hint 文件
 func (db *DB) Merge() error {
-	// 判断活跃文件情况
+	// 如果数据库为空，则直接返回
 	if db.activeFile == nil {
 		return nil
 	}
 	db.mu.Lock()
-	// 正在执行 merge 操作
+	// 如果 merge 正在进行当中，则直接返回
 	if db.isMerging {
 		db.mu.Unlock()
-		return ErrMergeInProgress
+		return ErrMergeIsProgress
 	}
-
 	db.isMerging = true
 	defer func() {
 		db.isMerging = false
 	}()
 
-	// 取出所有需要 merge 的文件
+	// 查看可 Merge 的容量是否达到了阈值
+	totalSize, err := utils.DirSize(db.options.DirPath)
+	if err != nil {
+		db.mu.Unlock()
+		return err
+	}
+	if float32(db.reclaimableSize)/float32(totalSize) < db.options.DataFileMergeRatio {
+		db.mu.Unlock()
+		return ErrMergeRatioUnreached
+	}
+
+	// 查看剩余的空间容量是否可以容纳 Merge 后的数据
+	availableDiskSize, err := utils.AvailableDiskSize()
+	if err != nil {
+		db.mu.Unlock()
+		return err
+	}
+	if uint64(totalSize-db.reclaimableSize) >= availableDiskSize {
+		db.mu.Unlock()
+		return ErrNoEnoughDiskForMerge
+	}
+
+	// 持久化当前活跃文件
 	if err := db.activeFile.Sync(); err != nil {
 		db.mu.Unlock()
 		return err
 	}
-
-	// 没有被 merge 的文件 id
-	nonMergeFileId := db.activeFile.FileId + 1
-	// 已经被 merge 的文件 id 放到旧文件 map 中进行存储
+	// 将当前活跃文件转换为旧的数据文件
 	db.olderFiles[db.activeFile.FileId] = db.activeFile
-
-	//	打开一个新的数据文件
+	// 打开新的活跃文件
 	if err := db.setActiveDataFile(); err != nil {
 		db.mu.Unlock()
-		return err
+		return nil
 	}
+	// 记录最近没有参与 merge 的文件 id
+	nonMergeFileId := db.activeFile.FileId
 
-	// merge 文件列表
+	// 取出所有需要 merge 的文件
 	var mergeFiles []*data.DataFile
 	for _, file := range db.olderFiles {
 		mergeFiles = append(mergeFiles, file)
 	}
 	db.mu.Unlock()
 
-	// 待 merge 的文件从小到大进行排序
+	//	待 merge 的文件从小到大进行排序，依次 merge
 	sort.Slice(mergeFiles, func(i, j int) bool {
 		return mergeFiles[i].FileId < mergeFiles[j].FileId
 	})
 
-	mergePath := db.getMergeDirPath()
-	// 目录存在则删除
+	mergePath := db.getMergePath()
+	// 如果目录存在，说明发生过 merge，将其删除掉
 	if _, err := os.Stat(mergePath); err == nil {
 		if err := os.RemoveAll(mergePath); err != nil {
 			return err
 		}
 	}
+	// 新建一个 merge path 的目录
 	if err := os.MkdirAll(mergePath, os.ModePerm); err != nil {
 		return err
 	}
-	// 打开新的 DB
+	// 打开一个新的临时 bitcask 实例
 	mergeOptions := db.options
-	mergeOptions.SyncWrites = false
 	mergeOptions.DirPath = mergePath
+	mergeOptions.SyncWrites = false
 	mergeDB, err := Open(mergeOptions)
 	if err != nil {
 		return err
 	}
 
-	hintFile, err := data.OpenHintFile(mergeDB.options.DirPath)
+	// 打开 hint 文件存储索引
+	hintFile, err := data.OpenHintFile(mergePath)
 	if err != nil {
 		return err
 	}
@@ -97,9 +120,10 @@ func (db *DB) Merge() error {
 				}
 				return err
 			}
-			// 解析日志文件
+			// 解析拿到实际的 key
 			realKey, _ := parseLogRecordKey(logRecord.Key)
 			logRecordPos := db.index.Get(realKey)
+			// 和内存中的索引位置进行比较，如果有效则重写
 			if logRecordPos != nil &&
 				logRecordPos.Fid == dataFile.FileId &&
 				logRecordPos.Offset == offset {
@@ -109,14 +133,16 @@ func (db *DB) Merge() error {
 				if err != nil {
 					return err
 				}
-				// 写 Hint 索引信息
+				// 将当前位置索引写到 Hint 文件当中
 				if err := hintFile.WriteHintRecord(realKey, pos); err != nil {
 					return err
 				}
 			}
+			// 增加 offset
 			offset += size
 		}
 	}
+
 	// sync 保证持久化
 	if err := hintFile.Sync(); err != nil {
 		return err
@@ -126,7 +152,7 @@ func (db *DB) Merge() error {
 	}
 
 	// 写标识 merge 完成的文件
-	mergeFinFile, err := data.OpenMergeFinishedFile(mergeDB.options.DirPath)
+	mergeFinishedFile, err := data.OpenMergeFinishedFile(mergePath)
 	if err != nil {
 		return err
 	}
@@ -135,25 +161,26 @@ func (db *DB) Merge() error {
 		Value: []byte(strconv.Itoa(int(nonMergeFileId))),
 	}
 	encRecord, _ := data.EncodeLogRecord(mergeFinRecord)
-	if err := mergeFinFile.Write(encRecord); err != nil {
+	if err := mergeFinishedFile.Write(encRecord); err != nil {
 		return err
 	}
-	if err := mergeFinFile.Sync(); err != nil {
+	if err := mergeFinishedFile.Sync(); err != nil {
 		return err
 	}
+
 	return nil
 }
 
-// 获取合并文件路径
-func (db *DB) getMergeDirPath() string {
+func (db *DB) getMergePath() string {
 	dir := path.Dir(path.Clean(db.options.DirPath))
 	base := path.Base(db.options.DirPath)
 	return filepath.Join(dir, base+mergeDirName)
 }
 
-// 加载合并文件
+// 加载 merge 数据目录
 func (db *DB) loadMergeFiles() error {
-	mergePath := db.getMergeDirPath()
+	mergePath := db.getMergePath()
+	// merge 目录不存在的话直接返回
 	if _, err := os.Stat(mergePath); os.IsNotExist(err) {
 		return nil
 	}
@@ -166,7 +193,7 @@ func (db *DB) loadMergeFiles() error {
 		return err
 	}
 
-	//	遍历查找是否完成了 merge
+	// 查找标识 merge 完成的文件，判断 merge 是否处理完了
 	var mergeFinished bool
 	var mergeFileNames []string
 	for _, entry := range dirEntries {
@@ -176,31 +203,34 @@ func (db *DB) loadMergeFiles() error {
 		if entry.Name() == data.SeqNoFileName {
 			continue
 		}
+		if entry.Name() == fileLockName {
+			continue
+		}
 		mergeFileNames = append(mergeFileNames, entry.Name())
 	}
+
+	// 没有 merge 完成则直接返回
 	if !mergeFinished {
 		return nil
 	}
 
 	nonMergeFileId, err := db.getNonMergeFileId(mergePath)
 	if err != nil {
-		return err
+		return nil
 	}
-	//	先删除旧的数据文件
+
+	// 删除旧的数据文件
 	var fileId uint32 = 0
 	for ; fileId < nonMergeFileId; fileId++ {
 		fileName := data.GetDataFileName(db.options.DirPath, fileId)
-		if _, err := os.Stat(fileName); err != nil {
+		if _, err := os.Stat(fileName); err == nil {
 			if err := os.Remove(fileName); err != nil {
 				return err
 			}
 		}
-		if err := os.Remove(fileName); err != nil {
-			return err
-		}
 	}
 
-	// 移动文件
+	// 将新的数据文件移动到数据目录中
 	for _, fileName := range mergeFileNames {
 		srcPath := filepath.Join(mergePath, fileName)
 		destPath := filepath.Join(db.options.DirPath, fileName)
@@ -211,35 +241,6 @@ func (db *DB) loadMergeFiles() error {
 	return nil
 }
 
-// 加载索引文件
-func (db *DB) loadIndexFromHintFile() error {
-	hintFileName := filepath.Join(db.options.DirPath, data.HintFileName)
-	if _, err := os.Stat(hintFileName); os.IsNotExist(err) {
-		return nil
-	}
-
-	hintFile, err := data.OpenHintFile(db.options.DirPath)
-	if err != nil {
-		return err
-	}
-
-	var offset int64 = 0
-	for {
-		logRecord, size, err := hintFile.ReadLogRecord(offset)
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return err
-		}
-		logRecordPos := data.DecodeLogRecordPos(logRecord.Value)
-		db.index.Put(logRecord.Key, logRecordPos)
-		offset += size
-	}
-	return nil
-}
-
-// 获取没有合并文件 id
 func (db *DB) getNonMergeFileId(dirPath string) (uint32, error) {
 	mergeFinishedFile, err := data.OpenMergeFinishedFile(dirPath)
 	if err != nil {
@@ -254,4 +255,37 @@ func (db *DB) getNonMergeFileId(dirPath string) (uint32, error) {
 		return 0, err
 	}
 	return uint32(nonMergeFileId), nil
+}
+
+// 从 hint 文件中加载索引
+func (db *DB) loadIndexFromHintFile() error {
+	// 查看 hint 索引文件是否存在
+	hintFileName := filepath.Join(db.options.DirPath, data.HintFileName)
+	if _, err := os.Stat(hintFileName); os.IsNotExist(err) {
+		return nil
+	}
+
+	//	打开 hint 索引文件
+	hintFile, err := data.OpenHintFile(db.options.DirPath)
+	if err != nil {
+		return err
+	}
+
+	// 读取文件中的索引
+	var offset int64 = 0
+	for {
+		logRecord, size, err := hintFile.ReadLogRecord(offset)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+
+		// 解码拿到实际的位置索引
+		pos := data.DecodeLogRecordPos(logRecord.Value)
+		db.index.Put(logRecord.Key, pos)
+		offset += size
+	}
+	return nil
 }
