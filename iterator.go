@@ -86,7 +86,7 @@ func (it *Iterator) skipToNext() {
 		if prefixLen <= len(key) &&
 			// 使用 bytes.Compare 比较：
 			//   - 返回 0 表示相等，
-			bytes.Compare(it.options.Prefix, key[:prefixLen]) == 0 {
+			bytes.Equal(it.options.Prefix, key[:prefixLen]) {
 
 			// 找到第一个满足前缀条件的 key 了，直接 break。
 			// 此时 indexIter 将停留在这个 key 上，供外部使用。
