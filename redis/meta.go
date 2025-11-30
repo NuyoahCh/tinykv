@@ -2,27 +2,31 @@ package redis
 
 import (
 	"encoding/binary"
-	"strconv"
+	"github.com/Nuyoahch/tinykv/utils"
+	"math"
 )
 
 const (
-	maxMetadataSize = 21
-	scorePrefix     = "$%!score$%!"
+	maxMetadataSize   = 1 + binary.MaxVarintLen64*2 + binary.MaxVarintLen32
+	extraListMetaSize = binary.MaxVarintLen64 * 2
+
+	initialListMark = math.MaxUint64 / 2
 )
 
+// 元数据
 type metadata struct {
-	dataType byte
-	expire   int64
-	version  int64
-	size     uint32
-	head     uint64
-	tail     uint64
+	dataType byte   // 数据类型
+	expire   int64  // 过期时间
+	version  int64  // 版本号
+	size     uint32 // 数据量
+	head     uint64 // List 数据结构专用
+	tail     uint64 // List 数据结构专用
 }
 
 func (md *metadata) encode() []byte {
 	var size = maxMetadataSize
 	if md.dataType == List {
-		size += 16
+		size += extraListMetaSize
 	}
 	buf := make([]byte, size)
 
@@ -76,10 +80,9 @@ type hashInternalKey struct {
 }
 
 func (hk *hashInternalKey) encode() []byte {
-	buf := make([]byte, 8+len(hk.key)+len(hk.field))
-	var index = 0
-
+	buf := make([]byte, len(hk.key)+len(hk.field)+8)
 	// key
+	var index = 0
 	copy(buf[index:index+len(hk.key)], hk.key)
 	index += len(hk.key)
 
@@ -93,6 +96,33 @@ func (hk *hashInternalKey) encode() []byte {
 	return buf
 }
 
+type setInternalKey struct {
+	key     []byte
+	version int64
+	member  []byte
+}
+
+func (sk *setInternalKey) encode() []byte {
+	buf := make([]byte, len(sk.key)+len(sk.member)+8+4)
+	// key
+	var index = 0
+	copy(buf[index:index+len(sk.key)], sk.key)
+	index += len(sk.key)
+
+	// version
+	binary.LittleEndian.PutUint64(buf[index:index+8], uint64(sk.version))
+	index += 8
+
+	// member
+	copy(buf[index:index+len(sk.member)], sk.member)
+	index += len(sk.member)
+
+	// member size
+	binary.LittleEndian.PutUint32(buf[index:], uint32(len(sk.member)))
+
+	return buf
+}
+
 type listInternalKey struct {
 	key     []byte
 	version int64
@@ -100,12 +130,11 @@ type listInternalKey struct {
 }
 
 func (lk *listInternalKey) encode() []byte {
-	buf := make([]byte, 8+8+len(lk.key))
-
-	var index = 0
+	buf := make([]byte, len(lk.key)+8+8)
 
 	// key
-	copy(buf[index:], lk.key)
+	var index = 0
+	copy(buf[index:index+len(lk.key)], lk.key)
 	index += len(lk.key)
 
 	// version
@@ -125,14 +154,12 @@ type zsetInternalKey struct {
 	score   float64
 }
 
-// key + version + member
-func (zk *zsetInternalKey) encodeMember() []byte {
+func (zk *zsetInternalKey) encodeWithMember() []byte {
 	buf := make([]byte, len(zk.key)+len(zk.member)+8)
 
-	var index = 0
-
 	// key
-	copy(buf[index:], zk.key)
+	var index = 0
+	copy(buf[index:index+len(zk.key)], zk.key)
 	index += len(zk.key)
 
 	// version
@@ -145,19 +172,13 @@ func (zk *zsetInternalKey) encodeMember() []byte {
 	return buf
 }
 
-// key + version + score
-func (zk *zsetInternalKey) encodeScore() []byte {
-	scoreBuf := []byte(strconv.FormatFloat(zk.score, 'f', -1, 64))
-	buf := make([]byte, len(scorePrefix)+len(zk.key)+len(scoreBuf)+8)
-
-	var index = 0
-
-	// prefix
-	copy(buf[index:], scorePrefix)
-	index += len(scorePrefix)
+func (zk *zsetInternalKey) encodeWithScore() []byte {
+	scoreBuf := utils.Float64ToBytes(zk.score)
+	buf := make([]byte, len(zk.key)+len(zk.member)+len(scoreBuf)+8+4)
 
 	// key
-	copy(buf[index:], zk.key)
+	var index = 0
+	copy(buf[index:index+len(zk.key)], zk.key)
 	index += len(zk.key)
 
 	// version
@@ -165,7 +186,15 @@ func (zk *zsetInternalKey) encodeScore() []byte {
 	index += 8
 
 	// score
-	copy(buf[index:], scoreBuf)
+	copy(buf[index:index+len(scoreBuf)], scoreBuf)
+	index += len(scoreBuf)
+
+	// member
+	copy(buf[index:index+len(zk.member)], zk.member)
+	index += len(zk.member)
+
+	// member size
+	binary.LittleEndian.PutUint32(buf[index:], uint32(len(zk.member)))
 
 	return buf
 }

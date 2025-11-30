@@ -1,31 +1,19 @@
 package redis
 
-import "github.com/Nuyoahch/tinykv"
+import "errors"
 
-func (rds *RedisDataStructure) Type(key []byte) (redisDataType, error) {
-	metadata, err := rds.db.Get(key)
-	if err != nil {
-		if err == tinykv.ErrKeyNotFound {
-			return 0, nil
-		}
-		return 0, err
-	}
-
-	metaInfo := decodeMetadata(metadata)
-	return metaInfo.dataType, nil
+func (rds *RedisDataStructure) Del(key []byte) error {
+	return rds.db.Delete(key)
 }
 
-func (rds *RedisDataStructure) Del(key []byte) (bool, error) {
-	_, err := rds.db.Get(key)
+func (rds *RedisDataStructure) Type(key []byte) (redisDataType, error) {
+	encValue, err := rds.db.Get(key)
 	if err != nil {
-		if err == tinykv.ErrKeyNotFound {
-			return false, nil
-		}
-		return false, err
+		return 0, err
 	}
-
-	if err = rds.db.Delete(key); err != nil {
-		return false, err
+	if len(encValue) == 0 {
+		return 0, errors.New("value is null")
 	}
-	return true, nil
+	// 第一个字节就是类型
+	return encValue[0], nil
 }
