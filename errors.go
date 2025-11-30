@@ -10,7 +10,7 @@ var (
 	ErrDataFileNotFound       = errors.New("data file is not found")
 	ErrDataDirectoryCorrupted = errors.New("the database directory maybe corrupted")
 	ErrExceedMaxBatchNum      = errors.New("exceed the max write batch num")
-	ErrMergeInProgress        = errors.New("merge is in progress, try again later")
+	ErrMergeIsProgress        = errors.New("merge is in progress, try again later")
 	ErrWriteBatchCannotUse    = errors.New("cannot use write batch, no seq no file")
 	ErrDatabaseIsUsing        = errors.New("database directory is using by another process")
 	ErrMergeRatioUnreached    = errors.New("merge ratio is unreached")
