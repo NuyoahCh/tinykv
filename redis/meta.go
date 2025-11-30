@@ -5,10 +5,9 @@ import (
 	"strconv"
 )
 
-const maxMetadataSize = 21
-
 const (
-	metaPart = "$%!meta!%$"
+	maxMetadataSize = 21
+	scorePrefix     = "$%!score$%!"
 )
 
 type metadata struct {
@@ -70,41 +69,23 @@ func decodeMetadata(buf []byte) *metadata {
 	}
 }
 
-func keyWithMetadata(key []byte) []byte {
-	metaLen := len(key) + len(metaPart)
-	metaKey := make([]byte, metaLen)
-	copy(metaKey[:metaLen], metaPart)
-	copy(metaKey[metaLen:], key)
-	return metaKey
-}
-
 type hashInternalKey struct {
 	key     []byte
 	version int64
 	field   []byte
 }
 
-// type + version + key size + key + field
-//
-//	1   +    8    +    4     +  n  +  n
 func (hk *hashInternalKey) encode() []byte {
-	buf := make([]byte, 1+8+4+len(hk.key)+len(hk.field))
-
-	// type
-	buf[0] = Hash
-	var index = 1
-
-	// version
-	binary.LittleEndian.PutUint64(buf[index:index+8], uint64(hk.version))
-	index += 8
-
-	// key size
-	binary.LittleEndian.PutUint32(buf[index:index+4], uint32(len(hk.key)))
-	index += 4
+	buf := make([]byte, 8+len(hk.key)+len(hk.field))
+	var index = 0
 
 	// key
 	copy(buf[index:index+len(hk.key)], hk.key)
 	index += len(hk.key)
+
+	// version
+	binary.LittleEndian.PutUint64(buf[index:index+8], uint64(hk.version))
+	index += 8
 
 	// field
 	copy(buf[index:], hk.field)
@@ -118,23 +99,18 @@ type listInternalKey struct {
 	index   uint64
 }
 
-// type + version + key + index
-//
-//	1   +    8    +  n  +  8
 func (lk *listInternalKey) encode() []byte {
-	buf := make([]byte, 1+8+8+len(lk.key))
+	buf := make([]byte, 8+8+len(lk.key))
 
-	// type
-	buf[0] = List
-	var index = 1
-
-	// version
-	binary.LittleEndian.PutUint64(buf[index:index+8], uint64(lk.version))
-	index += 8
+	var index = 0
 
 	// key
 	copy(buf[index:], lk.key)
 	index += len(lk.key)
+
+	// version
+	binary.LittleEndian.PutUint64(buf[index:index+8], uint64(lk.version))
+	index += 8
 
 	// index
 	binary.LittleEndian.PutUint64(buf[index:], lk.index)
@@ -145,47 +121,51 @@ func (lk *listInternalKey) encode() []byte {
 type zsetInternalKey struct {
 	key     []byte
 	version int64
-	score   float64
 	member  []byte
+	score   float64
 }
 
-// 1 : type + version + key + member + key size
-// 2 : type + version + key + score + key size
-func (zk *zsetInternalKey) encode() []byte {
-	var size = 1 + 8 + len(zk.key) + 4
-	var scoreBuf []byte
-	if zk.member != nil {
-		size += len(zk.member)
-	} else {
-		scoreBuf = []byte(strconv.FormatFloat(zk.score, 'f', -1, 64))
-		size += len(scoreBuf)
-	}
+// key + version + member
+func (zk *zsetInternalKey) encodeMember() []byte {
+	buf := make([]byte, len(zk.key)+len(zk.member)+8)
 
-	buf := make([]byte, size)
+	var index = 0
 
-	// type
-	buf[0] = ZSet
+	// key
+	copy(buf[index:], zk.key)
+	index += len(zk.key)
 
 	// version
-	var index = 1
 	binary.LittleEndian.PutUint64(buf[index:index+8], uint64(zk.version))
 	index += 8
 
+	// member
+	copy(buf[index:], zk.member)
+
+	return buf
+}
+
+// key + version + score
+func (zk *zsetInternalKey) encodeScore() []byte {
+	scoreBuf := []byte(strconv.FormatFloat(zk.score, 'f', -1, 64))
+	buf := make([]byte, len(scorePrefix)+len(zk.key)+len(scoreBuf)+8)
+
+	var index = 0
+
+	// prefix
+	copy(buf[index:], scorePrefix)
+	index += len(scorePrefix)
+
 	// key
-	copy(buf[index:index+len(zk.key)], zk.key)
+	copy(buf[index:], zk.key)
 	index += len(zk.key)
 
-	// member or score
-	if zk.member != nil {
-		copy(buf[index:index+len(zk.member)], zk.member)
-		index += len(zk.member)
-	} else {
-		copy(buf[index:index+len(scoreBuf)], scoreBuf)
-		index += len(scoreBuf)
-	}
+	// version
+	binary.LittleEndian.PutUint64(buf[index:index+8], uint64(zk.version))
+	index += 8
 
-	// key size
-	binary.LittleEndian.PutUint32(buf[index:], uint32(len(zk.key)))
+	// score
+	copy(buf[index:], scoreBuf)
 
 	return buf
 }

@@ -9,7 +9,6 @@ import (
 	"time"
 )
 
-// RedisDataStructure 数据结构
 type RedisDataStructure struct {
 	db *tinykv.DB // 存储数据和元数据信息
 }
@@ -56,11 +55,11 @@ func (rds *RedisDataStructure) Set(key []byte, ttl time.Duration, value []byte) 
 	copy(encValue[index:], value)
 
 	// 写入
-	return rds.db.Put(keyWithMetadata(key), encValue)
+	return rds.db.Put(key, encValue)
 }
 
 func (rds *RedisDataStructure) Get(key []byte) ([]byte, error) {
-	encValue, err := rds.db.Get(keyWithMetadata(key))
+	encValue, err := rds.db.Get(key)
 	if err != nil {
 		if err == tinykv.ErrKeyNotFound {
 			return nil, nil
@@ -85,7 +84,7 @@ func (rds *RedisDataStructure) Get(key []byte) ([]byte, error) {
 // HSet 新增一个 Hash 的值
 func (rds *RedisDataStructure) HSet(key, field, value []byte) (bool, error) {
 	// 先查找对应的元数据信息
-	metaBuf, err := rds.db.Get(keyWithMetadata(key))
+	metaBuf, err := rds.db.Get(key)
 	if err != nil && err != tinykv.ErrKeyNotFound {
 		return false, err
 	}
@@ -132,7 +131,7 @@ func (rds *RedisDataStructure) HSet(key, field, value []byte) (bool, error) {
 	// 写元数据
 	if !overwritten {
 		metaInfo.size++
-		_ = wb.Put(keyWithMetadata(key), metaInfo.encode())
+		_ = wb.Put(key, metaInfo.encode())
 	}
 	// 写数据
 	_ = wb.Put(internalKey.encode(), value)
@@ -146,7 +145,7 @@ func (rds *RedisDataStructure) HSet(key, field, value []byte) (bool, error) {
 
 func (rds *RedisDataStructure) HGet(key, field []byte) ([]byte, error) {
 	// 先查找对应的元数据信息
-	meta, err := rds.db.Get(keyWithMetadata(key))
+	meta, err := rds.db.Get(key)
 	if err != nil {
 		if err == tinykv.ErrKeyNotFound {
 			return nil, nil
@@ -177,7 +176,7 @@ func (rds *RedisDataStructure) HGet(key, field []byte) ([]byte, error) {
 
 func (rds *RedisDataStructure) HDel(key, field []byte) (bool, error) {
 	// 先查找对应的元数据信息
-	meta, err := rds.db.Get(keyWithMetadata(key))
+	meta, err := rds.db.Get(key)
 	if err != nil {
 		if err == tinykv.ErrKeyNotFound {
 			return false, nil
@@ -215,7 +214,7 @@ func (rds *RedisDataStructure) HDel(key, field []byte) (bool, error) {
 
 func (rds *RedisDataStructure) LPush(key []byte, value []byte) (uint32, error) {
 	// 先查找对应的元数据信息
-	metaBuf, err := rds.db.Get(keyWithMetadata(key))
+	metaBuf, err := rds.db.Get(key)
 	if err != nil && err != tinykv.ErrKeyNotFound {
 		return 0, err
 	}
@@ -252,7 +251,7 @@ func (rds *RedisDataStructure) LPush(key []byte, value []byte) (uint32, error) {
 	// 写元数据
 	metaInfo.size++
 	metaInfo.head--
-	_ = wb.Put(keyWithMetadata(key), metaInfo.encode())
+	_ = wb.Put(key, metaInfo.encode())
 
 	// 写数据
 	_ = wb.Put(internalKey.encode(), value)
@@ -266,7 +265,7 @@ func (rds *RedisDataStructure) LPush(key []byte, value []byte) (uint32, error) {
 
 func (rds *RedisDataStructure) LPop(key []byte) ([]byte, error) {
 	// 先查找对应的元数据信息
-	meta, err := rds.db.Get(keyWithMetadata(key))
+	meta, err := rds.db.Get(key)
 	if err != nil {
 		if err == tinykv.ErrKeyNotFound {
 			return nil, nil
@@ -302,7 +301,7 @@ func (rds *RedisDataStructure) LPop(key []byte) ([]byte, error) {
 	// 元数据
 	metaInfo.size--
 	metaInfo.head++
-	_ = wb.Put(keyWithMetadata(key), metaInfo.encode())
+	_ = wb.Put(key, metaInfo.encode())
 
 	// 删除数据
 	_ = wb.Delete(internalKey.encode())
@@ -318,7 +317,7 @@ func (rds *RedisDataStructure) LPop(key []byte) ([]byte, error) {
 
 func (rds *RedisDataStructure) ZAdd(key []byte, score float64, member []byte) (bool, error) {
 	// 先查找对应的元数据信息
-	metaBuf, err := rds.db.Get(keyWithMetadata(key))
+	metaBuf, err := rds.db.Get(key)
 	if err != nil && err != tinykv.ErrKeyNotFound {
 		return false, err
 	}
@@ -341,14 +340,16 @@ func (rds *RedisDataStructure) ZAdd(key []byte, score float64, member []byte) (b
 		}
 	}
 
-	// 先查看原始的 member 是否存在
-	keyWithMember := &zsetInternalKey{
+	internalKey := &zsetInternalKey{
 		key:     key,
 		version: metaInfo.version,
 		member:  member,
+		score:   score,
 	}
+
+	// 查找旧的值是否存在
 	var scoreExist = true
-	if _, err = rds.db.Get(keyWithMember.encode()); err != nil {
+	if _, err = rds.db.Get(internalKey.encodeMember()); err != nil {
 		if err == tinykv.ErrKeyNotFound {
 			scoreExist = false
 		} else {
@@ -357,35 +358,28 @@ func (rds *RedisDataStructure) ZAdd(key []byte, score float64, member []byte) (b
 	}
 
 	wb := rds.db.NewWriteBatch(tinykv.DefaultWriteBatchOptions)
-
 	// 存元数据
 	if !scoreExist {
 		metaInfo.size++
+		_ = wb.Put(key, metaInfo.encode())
 	}
-	_ = wb.Put(keyWithMetadata(key), metaInfo.encode())
 
 	// 存 key + member -> score
 	scoreBuf := []byte(strconv.FormatFloat(score, 'f', -1, 64))
-	_ = wb.Put(keyWithMember.encode(), scoreBuf)
+	_ = wb.Put(internalKey.encodeMember(), scoreBuf)
 
-	// 存 key+score -> member
-	keyWithScore := &zsetInternalKey{
-		key:     key,
-		version: metaInfo.version,
-		score:   score,
-	}
-	_ = wb.Put(keyWithScore.encode(), member)
+	// 存 key + score -> member
+	_ = wb.Put(internalKey.encodeScore(), member)
 
 	if err = wb.Commit(); err != nil {
 		return false, err
 	}
-
 	return !scoreExist, nil
 }
 
 func (rds *RedisDataStructure) ZScore(key []byte, member []byte) (float64, error) {
 	// 先查找对应的元数据信息
-	meta, err := rds.db.Get(keyWithMetadata(key))
+	meta, err := rds.db.Get(key)
 	if err != nil {
 		if err == tinykv.ErrKeyNotFound {
 			return 0, nil
@@ -397,14 +391,17 @@ func (rds *RedisDataStructure) ZScore(key []byte, member []byte) (float64, error
 	if metaInfo.expire != 0 && metaInfo.expire <= time.Now().UnixNano() {
 		return 0, nil
 	}
+	if metaInfo.size <= 0 {
+		return 0, nil
+	}
 
-	keyWithMember := &zsetInternalKey{
+	internalKey := &zsetInternalKey{
 		key:     key,
 		version: metaInfo.version,
 		member:  member,
 	}
 
-	scoreBuf, err := rds.db.Get(keyWithMember.encode())
+	scoreBuf, err := rds.db.Get(internalKey.encodeMember())
 	if err != nil {
 		if err == tinykv.ErrKeyNotFound {
 			return 0, nil
@@ -415,32 +412,55 @@ func (rds *RedisDataStructure) ZScore(key []byte, member []byte) (float64, error
 	return strconv.ParseFloat(string(scoreBuf), 64)
 }
 
-func (rds *RedisDataStructure) ZRange(key []byte) (float64, error) {
+func (rds *RedisDataStructure) ZRangeByScore(key []byte, min, max float64) ([][]byte, error) {
 	// 先查找对应的元数据信息
-	meta, err := rds.db.Get(keyWithMetadata(key))
+	meta, err := rds.db.Get(key)
 	if err != nil {
 		if err == tinykv.ErrKeyNotFound {
-			return 0, nil
+			return nil, nil
 		}
-		return 0, err
+		return nil, err
 	}
 
 	metaInfo := decodeMetadata(meta)
 	if metaInfo.expire != 0 && metaInfo.expire <= time.Now().UnixNano() {
-		return 0, nil
+		return nil, nil
+	}
+	if metaInfo.size <= 0 {
+		return nil, nil
 	}
 
 	internalKey := &zsetInternalKey{
 		key:     key,
 		version: metaInfo.version,
-		score:   0,
+		score:   min,
 	}
 
-	iter := rds.db.NewIterator(tinykv.DefaultIteratorOptions)
+	options := tinykv.DefaultIteratorOptions
+	options.Prefix = []byte(scorePrefix)
+	iter := rds.db.NewIterator(options)
 	defer iter.Close()
-	for iter.Seek(internalKey.encode()); iter.Valid(); iter.Next() {
-		fmt.Printf("key = %v\n", iter.Key())
-	}
+	var members [][]byte
+	for iter.Seek(internalKey.encodeScore()); iter.Valid(); iter.Next() {
+		fmt.Println("key = ", iter.Key())
+		member, err := iter.Value()
+		if err != nil {
+			return nil, err
+		}
 
-	return 0, nil
+		internalKey.member = member
+		scoreBuf, err := rds.db.Get(internalKey.encodeMember())
+		if err != nil {
+			return nil, err
+		}
+		score, err := strconv.ParseFloat(string(scoreBuf), 64)
+		if err != nil {
+			return nil, err
+		}
+		if score > max {
+			break
+		}
+		members = append(members, member)
+	}
+	return members, nil
 }
