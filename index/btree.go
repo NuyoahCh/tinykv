@@ -25,14 +25,17 @@ func NewBTree() *BTree {
 }
 
 // Put 向索引中存储 key 对应的数据位置信息
-func (bt *BTree) Put(key []byte, pos *data.LogRecordPos) bool {
+func (bt *BTree) Put(key []byte, pos *data.LogRecordPos) *data.LogRecordPos {
 	it := &Item{key: key, pos: pos}
 	// 存储数据前保证并发安全，进行加锁
 	bt.lock.Lock()
 	// 将给定项添加到树中
-	bt.tree.ReplaceOrInsert(it)
+	oldItem := bt.tree.ReplaceOrInsert(it)
 	bt.lock.Unlock()
-	return true
+	if oldItem == nil {
+		return nil
+	}
+	return oldItem.(*Item).pos
 }
 
 // Get 根据 key 取出对应的索引位置信息
@@ -47,7 +50,7 @@ func (bt *BTree) Get(key []byte) *data.LogRecordPos {
 }
 
 // Delete 根据 key 删除对应的索引位置信息
-func (bt *BTree) Delete(key []byte) bool {
+func (bt *BTree) Delete(key []byte) (*data.LogRecordPos, bool) {
 	it := &Item{key: key}
 	bt.lock.Lock()
 	// 删除操作
@@ -55,9 +58,9 @@ func (bt *BTree) Delete(key []byte) bool {
 	// opt：忘记解锁操作
 	bt.lock.Unlock()
 	if oldItem == nil {
-		return false
+		return nil, false
 	}
-	return true
+	return oldItem.(*Item).pos, true
 }
 
 // Size 索引中的数据量

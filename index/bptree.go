@@ -40,15 +40,20 @@ func NewBPlusTree(dirPath string, sync bool) *BPlusTree {
 }
 
 // Put 写入操作
-func (bpt *BPlusTree) Put(key []byte, pos *data.LogRecordPos) bool {
+func (bpt *BPlusTree) Put(key []byte, pos *data.LogRecordPos) *data.LogRecordPos {
+	var oldVal []byte
 	// 更新写入逻辑
 	if err := bpt.tree.Update(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket(indexBucketName)
+		oldVal = bucket.Get(key)
 		return bucket.Put(key, data.EncodeLogRecordPos(pos))
 	}); err != nil {
 		panic("failed to put index in bptree")
 	}
-	return true
+	if len(oldVal) == 0 {
+		return nil
+	}
+	return data.DecodeLogRecordPos(oldVal)
 }
 
 // Get 读取操作
@@ -69,15 +74,19 @@ func (bpt *BPlusTree) Get(key []byte) *data.LogRecordPos {
 }
 
 // Delete 删除操作
-func (bpt *BPlusTree) Delete(key []byte) bool {
+func (bpt *BPlusTree) Delete(key []byte) (*data.LogRecordPos, bool) {
+	var oldVal []byte
 	// 删除核心逻辑
 	if err := bpt.tree.Update(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket(indexBucketName)
-		return bucket.Delete(key)
+		if oldVal = bucket.Get(key); len(oldVal) != 0 {
+			return bucket.Delete(key)
+		}
+		return nil
 	}); err != nil {
 		panic("failed to delete index in bptree")
 	}
-	return true
+	return data.DecodeLogRecordPos(oldVal), true
 }
 
 // Size 获取元素大小操作
